@@ -153,8 +153,8 @@ class DataFile(NamedTuple):
         if (num_total_bytes % RECORD_SIZE) != 0:
             raise DataFileError(f"Maestro data file size in bytes ({num_total_bytes}) is not a multiple of 1024!")
         header = DataFileHeader.parse_header(content)
-        # if (header.version < 21) or header.is_continuous_mode():
-            # raise DataFileError(f"header.version is {header.version}. No support for version<21 Maestro data files or files recorded in Continuous mode!")
+        if (header.version < 21) or header.is_continuous_mode():
+            raise DataFileError(f"header.version is {header.version}. No support for version<21 Maestro data files or files recorded in Continuous mode!")
         try:
             offset = RECORD_SIZE
             while offset < num_total_bytes:
