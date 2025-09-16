@@ -120,7 +120,8 @@ class single_trial:
             'trial_length': len(data_file.ai_data[0]), # in ms
             'blinks': data_file.blinks, # list of (start, end) times in ms. Should be None
             'trial_failed': not bool(data_file.header.flags & maestro_file.FLAG_REWARD_GIVEN), # True if trial was failed
-            'neural_data': data_file.sorted_spikes   # dict of spike times keyed by cell_id
+            'neural_data': data_file.sorted_spikes,   # dict of spike times keyed by cell_id
+            'screen_rotation': data_file.header.pos_theta   # in degrees
         }    
         return trail_row
 
