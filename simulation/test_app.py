@@ -11,7 +11,7 @@ def test_poisson_process():
     print("Testing NonHomogeneousPoissonProcess...")
     
     # Import our module
-    import neural_analysis_app as app
+    import simulation.neural_analysis_app as app
     
     # Create process instance
     process = app.NonHomogeneousPoissonProcess()
@@ -47,7 +47,7 @@ def test_neural_app():
     """Test the NeuralAnalysisApp class"""
     print("\nTesting NeuralAnalysisApp...")
     
-    import neural_analysis_app as app
+    import simulation.neural_analysis_app as app
     
     # Create app instance
     neural_app = app.NeuralAnalysisApp()
@@ -82,7 +82,7 @@ def test_app_creation():
     print("\nTesting app creation...")
     
     try:
-        import neural_analysis_app as app
+        import simulation.neural_analysis_app as app
         # This tests that all imports and class definitions work
         neural_app = app.NeuralAnalysisApp()
         print("✓ App creation test passed")
