@@ -13,3 +13,4 @@ holoviews
 hvplot
 scikit-learn>=1.3
 tqdm
+openpyxl>=3.1
