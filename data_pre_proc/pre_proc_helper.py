@@ -42,12 +42,18 @@ class single_trial:
                 'data_dict', 'get_file_data', 
                 'extract_trail_info_from_trial_name', 'plot_behavior',
                 'get_saccades', 'get_first_relevant_saccade',
-                'from_dict'
+                'from_dict', 'POS_NORMALIZER', 'VEL_NORMALIZER',
+                '_single_trial__first_relevant_saccade'
         ]]
-        return {
+        data_dict = {
             attr: getattr(self, attr) 
             for attr in atrrs
         }
+        full_path = self.file_path.parts
+        data_dir_idx = full_path.index('data')
+        data_dict['file_path'] = str(Path(*full_path[data_dir_idx:]))
+        return data_dict
+        
     
     @property
     def first_relevant_saccade(self):
