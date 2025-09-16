@@ -39,15 +39,25 @@ class single_trial:
         atrrs = [atrr for atrr in dir(self) if not atrr.startswith("__") and not callable(atrr)]
         [
             atrrs.remove(func) for func in [
-            'data_dict', 'get_file_data', 
-            'extract_trail_info_from_trial_name', 'plot_behavior'
+                'data_dict', 'get_file_data', 
+                'extract_trail_info_from_trial_name', 'plot_behavior',
+                'get_saccades', 'get_first_relevant_saccade',
+                'from_dict'
         ]]
         return {
             attr: getattr(self, attr) 
             for attr in atrrs
         }
+    
+    @property
+    def first_relevant_saccade(self):
+        try:
+            return self.__first_relevant_saccade
+        except AttributeError:
+            self.get_first_relevant_saccade()
+            return self.__first_relevant_saccade
 
-    def get_file_data(self, file_path: Path, orig_vel=False) -> dict:
+    def get_file_data(self, file_path: Path) -> dict:
         try:
             with open(file_path, 'rb') as f:
                 data_file = maestro_file.DataFile.load(f.read(), file_path.name)
@@ -76,21 +86,11 @@ class single_trial:
             dir_value = 0 if direction == "R" else 180 if direction == "L" else None
         
         # Todo: crop out first segment interval from behaivoral data, spikes
-        if True: #orig_vel:
-            hVel = np.array(data_file.ai_data[2]) / self.VEL_NORMALIZER
-            vVel = np.array(data_file.ai_data[3]) / self.VEL_NORMALIZER
-        else:
-            hPos = np.array(data_file.ai_data[0]) / self.POS_NORMALIZER
-            vPos = np.array(data_file.ai_data[1]) / self.POS_NORMALIZER
-            # Smooth position data before calculating velocity
-            # smoothed_hPos = gaussian_filter1d(hPos, sigma=9)
-            # smoothed_vPos = gaussian_filter1d(vPos, sigma=9)
-            dt = 1 / 1000
-            # hVel = np.gradient(medfilt(hPos, 31), dt)
-            # vVel = np.gradient(medfilt(vPos, 31), dt)
-            hVel = np.gradient(hPos, dt) 
-            vVel = np.gradient(vPos, dt)
-            
+        hVel = np.array(data_file.ai_data[2]) / self.VEL_NORMALIZER
+        vVel = np.array(data_file.ai_data[3]) / self.VEL_NORMALIZER
+        
+        segs_times = np.array([0] + [seg.dur for seg in data_file.trial.segments]).cumsum()
+
         trail_row = {
             'filename': data_file.file_name, # e.g., 'fi211109a.2040'
             'trail_session': data_file.file_name.split('.')[0], # e.g., 'fi211109a'
@@ -102,7 +102,9 @@ class single_trial:
             'ssd_number': ssd_number,             # 1-4 for STOP/CONT, None for GO
             'ssd_len': data_file.trial.segments[2].dur,  # length of SSD segment
             'segs_durations': np.array([seg.dur for seg in data_file.trial.segments]), # durations of all segments
-            'segs_times': np.array([0] + [seg.dur for seg in data_file.trial.segments]).cumsum(), # cumulative times of segment boundaries
+            'segs_times': segs_times, # cumulative times of segment boundaries
+            'go_cue': segs_times[2], # time of go cue in ms
+            'stop_cue': segs_times[3] if trial_type in ['STOP', 'CONT'] else None, # time of stop (or continue) cue in ms
             'dir': dir_value,                     # 0 for R, 180 for L
             'hPos': np.array(data_file.ai_data[0]) / self.POS_NORMALIZER, # in degrees
             'vPos': np.array(data_file.ai_data[1]) / self.POS_NORMALIZER, # in degrees
@@ -139,7 +141,9 @@ class single_trial:
         
         return None
     
-    def plot_behavior(self):
+    def plot_behavior(self, with_saccades=True):
+        plot_line_width = 3
+        saccade_line_width = 2
         time = np.arange(len(self.hPos))  # Assuming 1 ms intervals
         df = pd.DataFrame({
             'Time (ms)': time,
@@ -162,7 +166,8 @@ class single_trial:
             height=600, 
             width=800, 
             legend='bottom_left',
-            line_width=3
+            line_width=plot_line_width,
+            muted_alpha=0
         ).opts(
             tools=['hover'], 
             active_tools=['wheel_zoom'], 
@@ -172,8 +177,14 @@ class single_trial:
         for i in range(len(self.segs_times)-1):
             plot *= hv.VSpan(
                 self.segs_times[i], self.segs_times[i+1]).opts(
-                    fill_alpha=0.3   
-                )
+                    fill_alpha=0.2   
+            )
+            
+        if with_saccades and hasattr(self, 'saccades'):
+
+            for start, end in self.saccades:
+                plot *= hv.VLine(start).opts(color='green', line_dash='dashed', line_width=saccade_line_width, show_legend=True)
+                plot *= hv.VLine(end).opts(color='red', line_dash='dashed', line_width=saccade_line_width)
         
         return plot
 
@@ -198,10 +209,32 @@ class single_trial:
                 0
             )
             saccades = np.dstack((saccade_starts, saccade_ends))[0]
+            self.saccades = saccades
             return saccades
         except Exception as e:
             return np.array([])    
+        
+    def get_first_relevant_saccade(self):
+        if not hasattr(self, 'saccades'):
+            self.get_saccades()
+        try:
+            saccade_times = np.array(self.saccades)
+            if saccade_times.ndim == 1:
+                saccade_times = saccade_times.reshape(1,2)
+            if saccade_times.shape == (2,):
+                first_relevant_saccade = saccade_times
+            else:
+                first_saccade_idx = np.array(np.where(
+                    (saccade_times[:,0] - self.go_cue) > 0
+                ))[:,0]
+                first_relevant_saccade = np.array(
+                    saccade_times[first_saccade_idx[0]], dtype=np.int16
+                )
+        except:
+            first_relevant_saccade = np.nan
 
+        self.__first_relevant_saccade = first_relevant_saccade
+        return first_relevant_saccade
 
 
     @classmethod
@@ -224,7 +257,10 @@ if __name__ == "__main__":
     print(file_path)    
 
     single_trial_instance = single_trial(file_path)
-
+    single_trial_instance.get_saccades()
+    single_trial_instance.get_first_relevant_saccade()
+    # pprint(single_trial_instance.saccades)
+    # pprint(single_trial_instance.first_relevant_saccade)
     # Uncomment to test get_file_data separately
     # test_data = single_trial_instance.get_file_data(file_path)
     # pprint(test_data)
