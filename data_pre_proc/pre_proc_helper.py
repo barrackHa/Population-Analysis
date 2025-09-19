@@ -12,6 +12,8 @@ from bokeh.io import output_notebook
 from bokeh.plotting import figure, show
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import butter, filtfilt, sosfiltfilt, medfilt
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
 
 import maestro_file
 import json
@@ -40,10 +42,11 @@ class single_trial:
         [
             atrrs.remove(func) for func in [
                 'data_dict', 'get_file_data', 
-                'extract_trail_info_from_trial_name', 'plot_behavior',
+                'extract_trial_info_from_trial_name', 'plot_behavior',
                 'get_saccades', 'get_first_relevant_saccade',
                 'from_dict', 'POS_NORMALIZER', 'VEL_NORMALIZER',
-                '_single_trial__first_relevant_saccade'
+                '_single_trial__first_relevant_saccade',
+                'is_trial_failed', 'compute_reaction_time'
         ]]
         data_dict = {
             attr: getattr(self, attr) 
@@ -75,7 +78,7 @@ class single_trial:
             
 
         # Extract trial information using regex
-        trial_info = self.extract_trail_info_from_trial_name(data_file.trial.name)
+        trial_info = self.extract_trial_info_from_trial_name(data_file.trial.name)
         
         # Handle case where trial name doesn't match expected patterns
         if trial_info is None:
@@ -97,10 +100,10 @@ class single_trial:
         
         segs_times = np.array([0] + [seg.dur for seg in data_file.trial.segments]).cumsum()
 
-        trail_row = {
+        trial_dict = {
             'filename': data_file.file_name, # e.g., 'fi211109a.2040'
-            'trail_session': data_file.file_name.split('.')[0], # e.g., 'fi211109a'
-            'trail_number': data_file.file_name.split('.')[1], # e.g., '2040'
+            'trial_session': data_file.file_name.split('.')[0], # e.g., 'fi211109a'
+            'trial_number': data_file.file_name.split('.')[1], # e.g., '2040'
             'trial_name': data_file.trial.name, # e.g., GO_R, STOP_L_SSD2
             'set': data_file.trial.set_name,    # CSST, 8dir_saccade, ...
             'type': trial_type,                    # GO, STOP, or CONT
@@ -119,13 +122,35 @@ class single_trial:
             'speed': np.sqrt(vVel**2 + hVel**2) , # in degrees/sec
             'trial_length': len(data_file.ai_data[0]), # in ms
             'blinks': data_file.blinks, # list of (start, end) times in ms. Should be None
-            'trial_failed': not bool(data_file.header.flags & maestro_file.FLAG_REWARD_GIVEN), # True if trial was failed
             'neural_data': data_file.sorted_spikes,   # dict of spike times keyed by cell_id
-            'screen_rotation': data_file.header.pos_theta   # in degrees
+            'screen_rotation': data_file.header.pos_theta,   # in degrees,
+            'flags': int(data_file.header.flags)
         }    
-        return trail_row
 
-    def extract_trail_info_from_trial_name(self, text):
+        trial_dict['trial_failed'] = self.is_trial_failed(
+            data_file.header.flags, trial_type
+        )
+
+        return trial_dict
+    
+    def is_trial_failed(self, flags: int, trial_type: str) -> bool:
+        if trial_type in ['GO', 'CONT']:
+            trial_failed = not bool(
+                flags & 
+                maestro_file.FLAG_REWARD_GIVEN # True if trial was failed
+            ) 
+        elif trial_type == 'STOP':
+            trial_failed = bool(
+                flags & 
+                maestro_file.FLAG_IS_DISTRACTED # True if stop trial failed
+            )
+        else:
+            trial_failed = np.nan
+        
+        return trial_failed
+
+
+    def extract_trial_info_from_trial_name(self, text):
         """
         Extract information from three types of strings:
         1. GO_{R/L} -> returns direction
@@ -242,6 +267,20 @@ class single_trial:
 
         self.__first_relevant_saccade = first_relevant_saccade
         return first_relevant_saccade
+    
+    def compute_reaction_time(self):
+        if not hasattr(self, 'first_relevant_saccade'):
+            self.get_first_relevant_saccade()
+        
+        if np.isnan(self.first_relevant_saccade).any():
+            return np.nan
+        
+        if np.isnan(self.go_cue):
+            return np.nan
+        
+        reaction_time = self.first_relevant_saccade[0] - self.go_cue
+        self.reaction_time = reaction_time
+        return reaction_time
 
 
     @classmethod
@@ -258,7 +297,8 @@ class single_trial:
         return obj
 
 
-if __name__ == "__main__":
+#%% Test single_trial class
+def single_trial_test():
     data_dir = Path.cwd() / "data/fiona_sst/fi211109"
     file_path = data_dir / "fi211109a.2040"
     print(file_path)    
@@ -275,7 +315,123 @@ if __name__ == "__main__":
     # print(repr(single_trial_instance))
     # print(single_trial_instance)
     plot = single_trial_instance.plot_behavior()
-        
-    #%%
     show(hv.render(plot))
+
+#%% DataFrameBuilder class
+
+class DataFrameBuilder:
+    SET_TYPES = ['CSST', '8dir_saccade']
+    def __init__(self, monkey_name: str, base_data_dir: Path, set_type = 'CSST'):
+        self.monkey_name = monkey_name
+        self.base_data_dir = base_data_dir
+        assert set_type in self.SET_TYPES, f"set_type must be one of {self.SET_TYPES}"
+        self.set_type = 'CSST'
+
+    def get_dirs_list(self):
+        monkey = self.monkey_name
+        base_path = Path.cwd().parent / 'data' / f'{monkey}_sst'
+        dirs = [d for d in base_path.iterdir() if d.is_dir()]
+        dirs.remove(base_path / 'trial_names')
+        return dirs
+    
+    def get_files_list(self):
+        dirs = self.get_dirs_list()
+        files = []
+        for dir_path in dirs:
+            files += list(f for f in dir_path.iterdir() if f.is_file())
+        return files
+    
+    def get_file_data(self, file_path: Path) -> dict:
+        single_trial_instance = single_trial(file_path)
+        if single_trial_instance.set != 'CSST':
+            return None
+        single_trial_instance.get_saccades()
+        single_trial_instance.get_first_relevant_saccade()
+        single_trial_instance.compute_reaction_time()
+        trial_row = single_trial_instance.data_dict
+        del trial_row['file_path']
+        return trial_row
+    
+    def process_file(self, file):
+        try:
+            file_data = self.get_file_data(file)
+            if file_data == {}:
+                return None
+            else:
+                return file_data
+        except Exception as e:
+            print(f'Error processing file {file}: {e}')
+            return None
+
+    def analyse_files_async(self, files_list):
+        results = []
+        with ThreadPoolExecutor() as executor:
+            # Submit all tasks to the executor
+            futures = {
+                executor.submit(self.process_file, file): 
+                file for file in files_list
+            }
+            
+            # Use tqdm to display the progress bar
+            for future in tqdm(as_completed(futures), total=len(files_list), desc="Loading files"):
+                results.append(future.result())
+        return results
+
+    def build_dataframe(self, test_run=False):
+        files = self.get_files_list()
+        if test_run:
+            files = files[:10]
+        results = self.analyse_files_async(files)
+        # Filter out None results
+        results = [result for result in results if result is not None]
+        print(f"Processed {len(results)} valid files out of {len(files)}")
+        # Create a DataFrame from the results
+        files_df = pd.DataFrame(results)
+        self.df = files_df
+        return files_df
+    
+    def save_dataframe(self, save_path: Path, name_suffix='', name_prefix=''):
+        file_name = f'{name_prefix}_{self.monkey_name}_{self.set_type}_trials_df{name_suffix}.pkl'
+        p = save_path / file_name
+        try:
+            self.df.to_pickle(p)    
+            print(f"DataFrame saved to {p}")
+        except Exception as e:
+            print(f"Error saving DataFrame to {p}: {e}")
+            self.df.to_pickle(Path.cwd() / file_name)
+            print(f"DataFrame saved to {Path.cwd() / file_name} instead")
+
+
+#%%
+def test_dataframe_builder():
+    monkey = 'fiona'
+    base_data_dir = Path.cwd() / 'data' / f'{monkey}_sst'
+    print(base_data_dir)
+    df_builder = DataFrameBuilder(monkey, base_data_dir, set_type='CSST')
+    files_df = df_builder.build_dataframe(test_run=True)
+    pprint(files_df.shape)
+    save_path = Path.cwd().parent / 'data' / f'csst_trials_pkls'
+    df_builder.save_dataframe(save_path, name_prefix='test')
+    return files_df
+
+#%% Analysis Fiona and Yasmin for real
+def create_and_save_monkeys_df():
+    for monkey in ['fiona', 'yasmin']:
+        print(f"Processing monkey: {monkey}")
+        base_data_dir = Path.cwd().parent / 'data' / f'{monkey}_sst'
+        if not base_data_dir.exists():
+            base_data_dir = Path.cwd() / 'data' / f'{monkey}_sst'
+        print(f"Base data directory: {base_data_dir}")
+        df_builder = DataFrameBuilder(monkey, base_data_dir, set_type='CSST')
+        files_df = df_builder.build_dataframe(test_run=False)
+        print("DataFrame shape:", files_df.shape)
+        save_path = base_data_dir.parent / f'csst_trials_pkls'
+        print(f"Save path is: {save_path}")
+        df_builder.save_dataframe(save_path, name_prefix='all')
+    # return files_df
+#%% 
+if __name__ == "__main__":
+    # single_trial_test()
+    # test_dataframe_builder()
+    create_and_save_monkeys_df()
 # %%
