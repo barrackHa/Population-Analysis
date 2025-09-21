@@ -46,7 +46,7 @@ class single_trial:
                 'get_saccades', 'get_first_relevant_saccade',
                 'from_dict', 'POS_NORMALIZER', 'VEL_NORMALIZER',
                 '_single_trial__first_relevant_saccade',
-                'is_trial_failed', 'compute_reaction_time'
+                'compute_reaction_time'
         ]]
         data_dict = {
             attr: getattr(self, attr) 
@@ -100,6 +100,8 @@ class single_trial:
         
         segs_times = np.array([0] + [seg.dur for seg in data_file.trial.segments]).cumsum()
 
+        bit_mask = maestro_file.FLAG_REWARD_EARNED if (trial_type != 'STOP') else maestro_file.FLAG_IS_ST_OK
+
         trial_dict = {
             'filename': data_file.file_name, # e.g., 'fi211109a.2040'
             'trial_session': data_file.file_name.split('.')[0], # e.g., 'fi211109a'
@@ -124,31 +126,11 @@ class single_trial:
             'blinks': data_file.blinks, # list of (start, end) times in ms. Should be None
             'neural_data': data_file.sorted_spikes,   # dict of spike times keyed by cell_id
             'screen_rotation': data_file.header.pos_theta,   # in degrees,
-            'flags': int(data_file.header.flags)
-        }    
-
-        trial_dict['trial_failed'] = self.is_trial_failed(
-            data_file.header.flags, trial_type
-        )
+            'flags': int(data_file.header.flags),
+            'trial_failed': not bool(data_file.header.flags & bit_mask) # True if trial was failed
+        }         
 
         return trial_dict
-    
-    def is_trial_failed(self, flags: int, trial_type: str) -> bool:
-        if trial_type in ['GO', 'CONT']:
-            trial_failed = not bool(
-                flags & 
-                maestro_file.FLAG_REWARD_GIVEN # True if trial was failed
-            ) 
-        elif trial_type == 'STOP':
-            trial_failed = bool(
-                flags & 
-                maestro_file.FLAG_IS_DISTRACTED # True if stop trial failed
-            )
-        else:
-            trial_failed = np.nan
-        
-        return trial_failed
-
 
     def extract_trial_info_from_trial_name(self, text):
         """
@@ -373,7 +355,10 @@ class DataFrameBuilder:
             }
             
             # Use tqdm to display the progress bar
-            for future in tqdm(as_completed(futures), total=len(files_list), desc="Loading files"):
+            for future in tqdm(
+                as_completed(futures), total=len(files_list), 
+                desc=f"Processing {self.monkey_name}'s files"
+            ):
                 results.append(future.result())
         return results
 
