@@ -584,7 +584,6 @@ class BehavioralEDA:
             x='ssd_len', y='error_percentage',
             color='red', line_width=3,
             label=f'Error stop ({self.monkey.title()})',
-            markers=True, marker_size=8
         ) * stop_performance.hvplot.scatter(
             x='ssd_len', y='error_percentage',
             color='red', size=150, alpha=0.5,
@@ -595,7 +594,6 @@ class BehavioralEDA:
             x='ssd_len', y='correct_percentage',
             color='blue', line_width=3,
             label=f'Correct continue ({self.monkey.title()})',
-            markers=True, marker_size=8, #line_dash='dashed'
         ) * cont_performance.hvplot.scatter(
             x='ssd_len', y='correct_percentage',
             color='blue', size=100, alpha=0.5,
