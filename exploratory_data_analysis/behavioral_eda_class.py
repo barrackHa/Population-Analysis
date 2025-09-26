@@ -85,7 +85,6 @@ class BehavioralEDA:
         """Setup holoviews configuration"""
         try:
             hv.extension('bokeh')
-            pn.extension('bokeh')
         except:
             pass  # Skip if bokeh not available
         
@@ -228,10 +227,8 @@ class BehavioralEDA:
         
         # Add SSD lengths
         ssd_len_col = []
-        for g, gdf in self.df.groupby('ssd_number'):
-            # print(f"SSD Number: {g}")
-            ssd_len_col.append(gdf['ssd_len'].value_counts().idxmax())
-            print(g, ": ",gdf['ssd_len'].value_counts().idxmax())
+        for _, gdf in self.df.groupby('ssd_number'):
+            ssd_len_col.append(gdf['ssd_len'].mean())
         ssd_len_col.sort()
 
         stop_performance['ssd_len'] = ssd_len_col
@@ -636,7 +633,7 @@ class BehavioralEDA:
             width=700, height=400,
             alpha=0.7,
             color='purple',
-            label=f'Continue continue RT {self.monkey}',
+            label=f'Continue RT {self.monkey}',
             legend=True
         )
         
@@ -735,3 +732,200 @@ class BehavioralEDA:
             print(rt_stats)
         else:
             print("No valid RTs computed")
+
+    def update_stop_trial_failures(self):
+        def check_if_stop_trial_failed(row):
+            if row['type'] == 'STOP':
+                if row['trial_failed']:
+                    return True
+                # Trial type is STOP and trial_failed is False
+                saccade = FirstRelevantSaccade(row)
+                if saccade.exceeds_threshold(4.0):
+                    return True
+                else:
+                    return False
+            return row['trial_failed'] 
+        self.df['trial_failed'] = self.df.apply(check_if_stop_trial_failed, axis=1)
+        return self.df['trial_failed']
+
+
+class FirstRelevantSaccade:
+    """
+    A class to extract and analyze the first relevant saccade from a trial row.
+    
+    This class takes a row from BehavioralEDA's DataFrame and extracts information
+    about the first relevant saccade, providing kinematic analysis capabilities.
+    """
+    
+    def __init__(self, trial_row, pre_buffer=20, post_buffer=20):
+        """
+        Initialize with a trial row from BehavioralEDA DataFrame.
+        
+        Parameters:
+        -----------
+        trial_row : pd.Series
+            A row from BehavioralEDA's DataFrame containing trial data
+        pre_buffer : int, default 20
+            Milliseconds to include before saccade start
+        post_buffer : int, default 20
+            Milliseconds to include after saccade end
+        """
+        self.row = trial_row
+        self.pre_buffer = pre_buffer
+        self.post_buffer = post_buffer
+        
+        # Extract first relevant saccade info
+        self._extract_saccade_info()
+        
+        # Create kinematic DataFrame
+        self._create_kinematic_dataframe()
+    
+    def _extract_saccade_info(self):
+        """Extract saccade start and end times from the trial row."""
+        first_saccade = self.row.get('first_relevant_saccade')
+        
+        if first_saccade is None or np.isnan(first_saccade).any():
+            self._saccade_start = None
+            self._saccade_end = None
+            self._valid_saccade = False
+            return
+        
+        # Handle different formats of saccade data
+        if isinstance(first_saccade, (list, tuple, np.ndarray)):
+            if len(first_saccade) >= 2:
+                self._saccade_start = int(first_saccade[0])
+                self._saccade_end = int(first_saccade[1])
+                self._valid_saccade = True
+            else:
+                self._saccade_start = None
+                self._saccade_end = None
+                self._valid_saccade = False
+        else:
+            # If it's a single value, assume it's start time and estimate duration
+            self._saccade_start = int(first_saccade)
+            self._saccade_end = self._saccade_start + 50  # Rough estimate
+            self._valid_saccade = True
+    
+    @property
+    def saccade_start(self):
+        """Get saccade start time in milliseconds."""
+        return self._saccade_start
+    
+    @property
+    def saccade_end(self):
+        """Get saccade end time in milliseconds."""
+        return self._saccade_end
+    
+    @property
+    def valid_saccade(self):
+        """Check if a valid saccade was found."""
+        return self._valid_saccade
+    
+    def _create_kinematic_dataframe(self):
+        """Create a DataFrame with kinematic data cropped around the saccade."""
+        if not self._valid_saccade:
+            self._kinematic_df = pd.DataFrame()
+            return
+        
+        # Calculate crop indices
+        crop_start = max(0, self._saccade_start - self.pre_buffer)
+        crop_end = min(len(self.row['hPos']), self._saccade_end + self.post_buffer)
+        
+        # Extract kinematic data
+        hPos = np.array(self.row['hPos'])[crop_start:crop_end]
+        vPos = np.array(self.row['vPos'])[crop_start:crop_end]
+        hVel = np.array(self.row['hVel'])[crop_start:crop_end]
+        vVel = np.array(self.row['vVel'])[crop_start:crop_end]
+        speed = np.array(self.row['speed'])[crop_start:crop_end]
+        
+        # Create time index with saccade start as T=0
+        time_indices = np.arange(crop_start, crop_end) - self._saccade_start
+        
+        # Create DataFrame
+        self._kinematic_df = pd.DataFrame({
+            'time': time_indices,
+            'hPos': hPos,
+            'vPos': vPos,
+            'hVel': hVel,
+            'vVel': vVel,
+            'speed': speed
+        })
+    
+    @property
+    def kinematic_dataframe(self):
+        """Get the kinematic DataFrame with saccade start at T=0."""
+        return self._kinematic_df
+    
+    def saccade_amplitude(self):
+        """
+        Calculate the amplitude (distance) of the saccade movement.
+        
+        Returns:
+        --------
+        float : Amplitude in degrees (Euclidean distance from start to end)
+        """
+        if not self._valid_saccade or self._kinematic_df.empty:
+            return np.nan
+        
+        # Find positions at saccade start and end in the kinematic data
+        start_idx = self._kinematic_df['time'] == 0  # Saccade start
+        saccade_duration = self._saccade_end - self._saccade_start
+        end_idx = self._kinematic_df['time'] == saccade_duration  # Saccade end
+        
+        if not start_idx.any() or not end_idx.any():
+            # Fallback: use first and last available points
+            start_pos = self._kinematic_df.iloc[0]
+            end_pos = self._kinematic_df.iloc[-1]
+        else:
+            start_pos = self._kinematic_df[start_idx].iloc[0]
+            end_pos = self._kinematic_df[end_idx].iloc[0]
+        
+        # Calculate Euclidean distance using np.linalg.norm
+        start_position = np.array([start_pos['hPos'], start_pos['vPos']])
+        end_position = np.array([end_pos['hPos'], end_pos['vPos']])
+        amplitude = np.linalg.norm(end_position - start_position)
+        
+        return amplitude
+    
+    def exceeds_threshold(self, threshold=4.0):
+        """
+        Determine if the saccade movement exceeds a given threshold.
+        
+        Parameters:
+        -----------
+        threshold : float, default 4.0
+            Threshold amplitude in degrees
+        
+        Returns:
+        --------
+        bool : True if saccade amplitude exceeds threshold
+        """
+        amplitude = self.saccade_amplitude()
+        
+        if np.isnan(amplitude):
+            return False
+        
+        return amplitude > threshold
+    
+    def get_summary(self):
+        """
+        Get a summary of the saccade analysis.
+        
+        Returns:
+        --------
+        dict : Summary statistics and properties
+        """
+        amplitude = self.saccade_amplitude()
+        
+        summary = {
+            'valid_saccade': self._valid_saccade,
+            'saccade_start': self._saccade_start,
+            'saccade_end': self._saccade_end,
+            'saccade_duration': self._saccade_end - self._saccade_start if self._valid_saccade else None,
+            'amplitude': amplitude,
+            'kinematic_points': len(self._kinematic_df) if not self._kinematic_df.empty else 0,
+            'time_range': (self._kinematic_df['time'].min(), self._kinematic_df['time'].max()) 
+                            if not self._kinematic_df.empty else (None, None)
+        }
+        
+        return summary
