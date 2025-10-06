@@ -1,0 +1,785 @@
+import pandas as pd
+import numpy as np
+import holoviews as hv
+from scipy.ndimage import gaussian_filter1d
+
+
+class Session:
+    """
+    Class representing a single recording session with multiple MSN cells.
+    Handles population-level analysis within a session.
+    Data generation methods are separated from plotting methods.
+    """
+    
+    def __init__(self, session_df):
+        """
+        Initialize Session with all cells from a single recording session.
+        
+        Parameters:
+        -----------
+        session_df : pd.DataFrame
+            DataFrame containing all cell-trial data for a single session
+        """
+        self.data = session_df.copy()
+        self.session_id = session_df.iloc[0]['trial_session']
+        self.cell_ids = sorted(self.data['cell_ID'].unique())
+        self.n_cells = len(self.cell_ids)
+        
+        print(f"Session {self.session_id} initialized:")
+        print(f"  - Number of cells: {self.n_cells}")
+        print(f"  - Total trials: {len(self.data)}")
+        print(f"  - Trial types: {sorted(self.data['type'].unique())}")
+        print(f"  - Directions: {sorted(self.data['dir'].unique())}")
+    
+    def align_spikes_to_event(self, alignment_point='go_cue'):
+        """
+        Align spike times to a specific event for all cells in the session.
+        
+        Parameters:
+        -----------
+        alignment_point : str
+            Event to align to: 'go_cue', 'stop_cue', or 'first_relevant_saccade'
+        """
+        def get_alignment_time(row):
+            if alignment_point == 'go_cue':
+                return row['go_cue']
+            elif alignment_point == 'stop_cue':
+                return row['stop_cue'] if not pd.isna(row['stop_cue']) else row['go_cue']
+            elif alignment_point == 'first_relevant_saccade':
+                saccade = row['first_relevant_saccade']
+                if isinstance(saccade, (list, np.ndarray)) and len(saccade) > 0:
+                    return saccade[0]
+                return np.nan
+            else:
+                return alignment_point
+        
+        def align_spikes(row):
+            t_0 = get_alignment_time(row)
+            if pd.isna(t_0):
+                return np.array([])
+            spikes = np.array(row['neural_data'], dtype=float)
+            return spikes - t_0
+        
+        col_name = f'spikes_aligned_to_{alignment_point}'
+        self.data[col_name] = self.data.apply(align_spikes, axis=1)
+        return col_name
+    
+    def get_cell_psth(self, cell_id, epok=[-500, 1000], bin_size=10,
+                      alignment_point='go_cue', trial_type=None, direction=None,
+                      ssd_number=None, success_only=True, smooth=True):
+        """
+        Calculate PSTH for a specific cell.
+        
+        Parameters:
+        -----------
+        cell_id : int
+            Cell identifier
+        epok : list
+            Time window [start, end] in ms
+        bin_size : int
+            Bin size in ms
+        alignment_point : str
+            Event to align to
+        trial_type : str, optional
+            'GO', 'STOP', or 'CONT'
+        direction : int, optional
+            0 (right) or 180 (left)
+        ssd_number : int, optional
+            SSD number (1-4)
+        success_only : bool
+            Include only successful trials
+        smooth : bool
+            Apply Gaussian smoothing
+            
+        Returns:
+        --------
+        tuple : (bin_centers, firing_rate, n_trials)
+        """
+        # Get alignment column
+        col_name = f'spikes_aligned_to_{alignment_point}'
+        if col_name not in self.data.columns:
+            self.align_spikes_to_event(alignment_point)
+        
+        # Filter data for this cell and conditions
+        cell_data = self.data[self.data['cell_ID'] == cell_id].copy()
+        
+        if trial_type is not None:
+            cell_data = cell_data[cell_data['type'] == trial_type]
+        
+        if direction is not None:
+            cell_data = cell_data[cell_data['dir'] == direction]
+        
+        if ssd_number is not None:
+            cell_data = cell_data[cell_data['ssd_number'] == ssd_number]
+        
+        if success_only:
+            cell_data = cell_data[cell_data['trial_failed'] == False]
+        
+        if len(cell_data) == 0:
+            return None, None, 0
+        
+        # Create bins
+        bins = np.arange(epok[0], epok[1] + bin_size, bin_size)
+        bin_centers = bins[:-1] + bin_size / 2
+        
+        # Count spikes in each bin
+        spike_counts = np.zeros(len(bins) - 1)
+        for _, row in cell_data.iterrows():
+            spikes = row[col_name]
+            counts, _ = np.histogram(spikes, bins=bins)
+            spike_counts += counts
+        
+        # Convert to firing rate (spikes/sec)
+        n_trials = len(cell_data)
+        firing_rate = (spike_counts / n_trials) / (bin_size / 1000)
+        
+        # Apply Gaussian smoothing if requested
+        if smooth:
+            firing_rate = gaussian_filter1d(firing_rate, sigma=bin_size, truncate=2)
+        
+        return bin_centers, firing_rate, n_trials
+    
+    def get_all_cells_psth(self, epok=[-500, 1000], bin_size=10,
+                           alignment_point='go_cue', trial_type=None, direction=None,
+                           ssd_number=None, success_only=True, smooth=True,
+                           normalize=True):
+        """
+        Get PSTH for all cells in the session.
+        
+        Parameters:
+        -----------
+        Same as get_cell_psth, plus:
+        normalize : bool
+            If True, normalize all firing rates by the global maximum across all cells
+            
+        Returns:
+        --------
+        tuple : (bin_centers, psth_matrix, cell_ids_used)
+            - bin_centers: time bins
+            - psth_matrix: 2D array (n_cells × n_bins)
+            - cell_ids_used: list of cell IDs with data
+        """
+        psth_list = []
+        cells_used = []
+        bin_centers = None
+        
+        # First pass: collect all PSTHs without normalization
+        for cell_id in self.cell_ids:
+            bins, firing_rate, n_trials = self.get_cell_psth(
+                cell_id=cell_id,
+                epok=epok,
+                bin_size=bin_size,
+                alignment_point=alignment_point,
+                trial_type=trial_type,
+                direction=direction,
+                ssd_number=ssd_number,
+                success_only=success_only,
+                smooth=smooth
+            )
+            
+            if bins is not None and n_trials > 0:
+                psth_list.append(firing_rate)
+                cells_used.append(cell_id)
+                
+                if bin_centers is None:
+                    bin_centers = bins
+        
+        if len(psth_list) == 0:
+            return None, None, []
+        
+        psth_matrix = np.array(psth_list)
+        
+        # Apply global normalization if requested
+        if normalize:
+            global_max = psth_matrix.max()
+            if global_max > 0:
+                psth_matrix = psth_matrix / global_max
+        
+        return bin_centers, psth_matrix, cells_used
+    
+    # ==================== DATA GENERATION METHODS ====================
+    
+    def get_population_data_single_condition(self, epok=[-500, 1000], bin_size=10,
+                                             alignment_point='go_cue', trial_type=None, 
+                                             direction=None, ssd_number=None, 
+                                             success_only=True, smooth=True,
+                                             normalize=True, sort_by_peak=True):
+        """
+        Get population PSTH data for a single condition.
+        DATA GENERATION METHOD - separated from plotting.
+        
+        Parameters:
+        -----------
+        sort_by_peak : bool
+            Sort cells by time of peak activity (ascending order by argmax)
+        
+        Returns:
+        --------
+        dict : Dictionary with keys:
+            - 'bin_centers': time bins
+            - 'psth_matrix': 2D array (n_cells × n_bins), sorted if requested
+            - 'cell_ids': list of cell IDs in the order shown
+            - 'sort_idx': sorting indices used (if sort_by_peak=True)
+            - 'params': dict of parameters used
+        """
+        # Get PSTH for all cells
+        bin_centers, psth_matrix, cells_used = self.get_all_cells_psth(
+            epok=epok,
+            bin_size=bin_size,
+            alignment_point=alignment_point,
+            trial_type=trial_type,
+            direction=direction,
+            ssd_number=ssd_number,
+            success_only=success_only,
+            smooth=smooth,
+            normalize=normalize
+        )
+        
+        if psth_matrix is None:
+            return None
+        
+        # Sort by peak time if requested
+        sort_idx = None
+        if sort_by_peak:
+            peak_times = np.argmax(psth_matrix, axis=1)
+            sort_idx = np.argsort(peak_times)
+            psth_matrix = psth_matrix[sort_idx]
+            cells_used = [cells_used[i] for i in sort_idx]
+        
+        return {
+            'bin_centers': bin_centers,
+            'psth_matrix': psth_matrix,
+            'cell_ids': cells_used,
+            'sort_idx': sort_idx,
+            'params': {
+                'epok': epok,
+                'bin_size': bin_size,
+                'alignment_point': alignment_point,
+                'trial_type': trial_type,
+                'direction': direction,
+                'ssd_number': ssd_number,
+                'success_only': success_only,
+                'smooth': smooth,
+                'normalize': normalize,
+                'sort_by_peak': sort_by_peak
+            }
+        }
+    
+    def get_population_data_left_right(self, epok=[-500, 1000], bin_size=10,
+                                       alignment_point='go_cue', trial_type=None,
+                                       ssd_number=None, success_only=True, smooth=True,
+                                       normalize=True):
+        """
+        Get population data for left vs right comparison.
+        DATA GENERATION METHOD - separated from plotting.
+        Cells are ordered by left direction peak, right uses same order.
+        
+        Returns:
+        --------
+        dict : Dictionary with keys:
+            - 'left': data dict for left direction
+            - 'right': data dict for right direction (reordered to match left)
+            - 'cell_order': list of cell IDs in display order
+        """
+        # Get left direction data
+        data_left = self.get_population_data_single_condition(
+            epok=epok, bin_size=bin_size, alignment_point=alignment_point,
+            trial_type=trial_type, direction=180, ssd_number=ssd_number,
+            success_only=success_only, smooth=smooth, normalize=normalize,
+            sort_by_peak=True
+        )
+        
+        if data_left is None:
+            print("No data for left direction")
+            return None
+        
+        cells_sorted = data_left['cell_ids']
+        
+        # Get right direction data (unsorted)
+        data_right_unsorted = self.get_population_data_single_condition(
+            epok=epok, bin_size=bin_size, alignment_point=alignment_point,
+            trial_type=trial_type, direction=0, ssd_number=ssd_number,
+            success_only=success_only, smooth=smooth, normalize=normalize,
+            sort_by_peak=False
+        )
+        
+        if data_right_unsorted is None:
+            print("No data for right direction")
+            return None
+        
+        # Reorder right to match left's cell order
+        cell_to_idx_right = {cell: idx for idx, cell in enumerate(data_right_unsorted['cell_ids'])}
+        psth_right_sorted = np.zeros_like(data_left['psth_matrix'])
+        
+        for new_idx, cell_id in enumerate(cells_sorted):
+            if cell_id in cell_to_idx_right:
+                old_idx = cell_to_idx_right[cell_id]
+                psth_right_sorted[new_idx] = data_right_unsorted['psth_matrix'][old_idx]
+        
+        # Create right data dict with reordered matrix
+        data_right = data_right_unsorted.copy()
+        data_right['psth_matrix'] = psth_right_sorted
+        data_right['cell_ids'] = cells_sorted
+        
+        return {
+            'left': data_left,
+            'right': data_right,
+            'cell_order': cells_sorted
+        }
+    
+    def get_population_data_trial_types(self, epok_go=[-500, 1000], epok_stop=[-500, 1000],
+                                        bin_size=10, direction=None,
+                                        ssd_number=None, success_only=True, smooth=True,
+                                        normalize=True):
+        """
+        Get population data for GO, STOP, and CONT trial comparison.
+        DATA GENERATION METHOD - separated from plotting.
+        - GO: aligned to go_cue
+        - STOP: aligned to stop_cue
+        - CONT: aligned to stop_cue
+        All three use same cell ordering (based on GO trial peaks).
+        
+        Returns:
+        --------
+        dict : Dictionary with keys:
+            - 'go': data dict for GO trials
+            - 'stop': data dict for STOP trials (reordered to match GO)
+            - 'cont': data dict for CONT trials (reordered to match GO)
+            - 'cell_order': list of cell IDs in display order
+        """
+        # Get GO trials (aligned to go_cue) and sort by peak
+        data_go = self.get_population_data_single_condition(
+            epok=epok_go, bin_size=bin_size, alignment_point='go_cue',
+            trial_type='GO', direction=direction, ssd_number=None,
+            success_only=success_only, smooth=smooth, normalize=normalize,
+            sort_by_peak=True
+        )
+        
+        if data_go is None:
+            print("No GO trial data")
+            return None
+        
+        cells_sorted = data_go['cell_ids']
+        
+        # Get STOP trials (aligned to stop_cue, unsorted)
+        data_stop_unsorted = self.get_population_data_single_condition(
+            epok=epok_stop, bin_size=bin_size, alignment_point='stop_cue',
+            trial_type='STOP', direction=direction, ssd_number=ssd_number,
+            success_only=success_only, smooth=smooth, normalize=normalize,
+            sort_by_peak=False
+        )
+        
+        # Get CONT trials (aligned to stop_cue, unsorted)
+        data_cont_unsorted = self.get_population_data_single_condition(
+            epok=epok_stop, bin_size=bin_size, alignment_point='stop_cue',
+            trial_type='CONT', direction=direction, ssd_number=ssd_number,
+            success_only=success_only, smooth=smooth, normalize=normalize,
+            sort_by_peak=False
+        )
+        
+        # Reorder STOP to match GO's cell order
+        if data_stop_unsorted is not None:
+            cell_to_idx_stop = {cell: idx for idx, cell in enumerate(data_stop_unsorted['cell_ids'])}
+            psth_stop_sorted = np.zeros((len(cells_sorted), data_stop_unsorted['psth_matrix'].shape[1]))
+            
+            for new_idx, cell_id in enumerate(cells_sorted):
+                if cell_id in cell_to_idx_stop:
+                    old_idx = cell_to_idx_stop[cell_id]
+                    psth_stop_sorted[new_idx] = data_stop_unsorted['psth_matrix'][old_idx]
+            
+            data_stop = data_stop_unsorted.copy()
+            data_stop['psth_matrix'] = psth_stop_sorted
+            data_stop['cell_ids'] = cells_sorted
+        else:
+            data_stop = None
+        
+        # Reorder CONT to match GO's cell order
+        if data_cont_unsorted is not None:
+            cell_to_idx_cont = {cell: idx for idx, cell in enumerate(data_cont_unsorted['cell_ids'])}
+            psth_cont_sorted = np.zeros((len(cells_sorted), data_cont_unsorted['psth_matrix'].shape[1]))
+            
+            for new_idx, cell_id in enumerate(cells_sorted):
+                if cell_id in cell_to_idx_cont:
+                    old_idx = cell_to_idx_cont[cell_id]
+                    psth_cont_sorted[new_idx] = data_cont_unsorted['psth_matrix'][old_idx]
+            
+            data_cont = data_cont_unsorted.copy()
+            data_cont['psth_matrix'] = psth_cont_sorted
+            data_cont['cell_ids'] = cells_sorted
+        else:
+            data_cont = None
+        
+        return {
+            'go': data_go,
+            'stop': data_stop,
+            'cont': data_cont,
+            'cell_order': cells_sorted
+        }
+    
+    # ==================== PLOTTING METHODS ====================
+    
+    def plot_population_heatmap(self, data=None, **kwargs):
+        """
+        Plot a heatmap of all cells' activity in the session.
+        Can use pre-generated data or generate new data.
+        
+        Parameters:
+        -----------
+        data : dict, optional
+            Pre-generated data from get_population_data_single_condition()
+            If None, will generate data using **kwargs
+        **kwargs : dict
+            Parameters for get_population_data_single_condition() if data is None
+        
+        Returns:
+        --------
+        hv.Image : Heatmap plot
+        """
+        # Generate data if not provided
+        if data is None:
+            data = self.get_population_data_single_condition(**kwargs)
+        
+        if data is None:
+            print("No data found for specified conditions")
+            return None
+        
+        psth_matrix = data['psth_matrix']
+        bin_centers = data['bin_centers']
+        params = data['params']
+        
+        # Create heatmap
+        # Image kdims are [x, y], so [Time, Neurons]
+        # psth_matrix is (neurons, time), which is what Image expects for the data
+        img = hv.Image(
+            psth_matrix,
+            kdims=['Time', 'Neurons'],
+            vdims='Firing Rate',
+            bounds=(params['epok'][0], 0, params['epok'][1], psth_matrix.shape[0])
+        ).opts(
+            cmap='Plasma',
+            colorbar=True,
+            width=800,
+            height=600,
+            xlabel=f'Time from {params["alignment_point"]} (ms)',
+            ylabel='Neurons',
+            title=f'Session {self.session_id} - {params["trial_type"] or "All"} trials - Dir {params["direction"] if params["direction"] is not None else "Both"}',
+            invert_yaxis=False,
+            tools=['hover']
+        )
+        
+        return img
+    
+    def plot_left_right_comparison(self, data=None, **kwargs):
+        """
+        Plot left vs right direction heatmaps with same cell ordering.
+        Cells are ordered by left direction peak, right uses same order.
+        
+        Parameters:
+        -----------
+        data : dict, optional
+            Pre-generated data from get_population_data_left_right()
+            If None, will generate data using **kwargs
+        **kwargs : dict
+            Parameters for get_population_data_left_right() if data is None
+        
+        Returns:
+        --------
+        hv.Layout : Side-by-side heatmaps
+        """
+        # Generate data if not provided
+        if data is None:
+            data = self.get_population_data_left_right(**kwargs)
+        
+        if data is None:
+            return None
+        
+        data_left = data['left']
+        data_right = data['right']
+        params_left = data_left['params']
+        
+        # Create heatmaps
+        n_cells = data_left['psth_matrix'].shape[0]
+        img_left = hv.Image(
+            data_left['psth_matrix'],
+            kdims=['Time', 'Neurons'],
+            vdims='Firing Rate',
+            bounds=(params_left['epok'][0], 0, params_left['epok'][1], n_cells)
+        ).opts(
+            cmap='Plasma',
+            colorbar=True,
+            width=400,
+            height=600,
+            xlabel=f'Time from {params_left["alignment_point"]} (ms)',
+            ylabel='Neurons',
+            title=f'Left (180°) - {params_left["trial_type"] or "All"}',
+            invert_yaxis=False,
+            tools=['hover']
+        )
+        
+        img_right = hv.Image(
+            data_right['psth_matrix'],
+            kdims=['Time', 'Neurons'],
+            vdims='Firing Rate',
+            bounds=(params_left['epok'][0], 0, params_left['epok'][1], n_cells)
+        ).opts(
+            cmap='Plasma',
+            colorbar=True,
+            width=400,
+            height=600,
+            xlabel=f'Time from {params_left["alignment_point"]} (ms)',
+            ylabel='Neurons',
+            title=f'Right (0°) - {params_left["trial_type"] or "All"}',
+            invert_yaxis=False,
+            tools=['hover']
+        )
+        
+        return (img_left + img_right).cols(2)
+    
+    def plot_trial_type_comparison(self, data_left=None, data_right=None, **kwargs):
+        """
+        Plot GO, STOP, and CONT trials with appropriate alignments in 3×2 grid.
+        - Rows: GO, STOP, CONT trial types
+        - Columns: Left (180°), Right (0°) directions
+        - GO: aligned to go_cue
+        - STOP: aligned to stop_cue
+        - CONT: aligned to stop_cue
+        
+        All plots use the same cell ordering (based on GO left direction peaks).
+        
+        Parameters:
+        -----------
+        data_left : dict, optional
+            Pre-generated data for left direction from get_population_data_trial_types()
+        data_right : dict, optional
+            Pre-generated data for right direction from get_population_data_trial_types()
+        **kwargs : dict
+            Parameters for get_population_data_trial_types() if data not provided
+            Note: 'direction' parameter will be ignored as both directions are plotted
+        
+        Returns:
+        --------
+        hv.Layout : 3×2 grid of heatmaps
+        """
+        # Remove direction parameter if provided in kwargs
+        kwargs.pop('direction', None)
+        
+        # Generate left direction data if not provided
+        if data_left is None:
+            data_left = self.get_population_data_trial_types(direction=180, **kwargs)
+        
+        # Generate right direction data if not provided  
+        if data_right is None:
+            data_right = self.get_population_data_trial_types(direction=0, **kwargs)
+        
+        if data_left is None or data_right is None:
+            print("Missing data for one or both directions")
+            return None
+        
+        # Use left direction's cell ordering for both
+        cell_order = data_left['cell_order']
+        n_cells = len(cell_order)
+        
+        # Reorder right direction data to match left
+        for trial_key in ['go', 'stop', 'cont']:
+            if data_right[trial_key] is not None and data_left[trial_key] is not None:
+                right_data = data_right[trial_key]
+                left_cell_order = data_left['cell_order']
+                
+                # Create mapping from cell_id to index in right data
+                cell_to_idx = {cell: idx for idx, cell in enumerate(right_data['cell_ids'])}
+                
+                # Reorder right matrix to match left's cell order
+                reordered_matrix = np.zeros_like(data_left[trial_key]['psth_matrix'])
+                for new_idx, cell_id in enumerate(left_cell_order):
+                    if cell_id in cell_to_idx:
+                        old_idx = cell_to_idx[cell_id]
+                        reordered_matrix[new_idx] = right_data['psth_matrix'][old_idx]
+                
+                data_right[trial_key]['psth_matrix'] = reordered_matrix
+                data_right[trial_key]['cell_ids'] = left_cell_order
+        
+        # Create heatmaps for each trial type and direction
+        plots = []
+        
+        for trial_type, trial_key in [('GO', 'go'), ('STOP', 'stop'), ('CONT', 'cont')]:
+            data_l = data_left[trial_key]
+            data_r = data_right[trial_key]
+            
+            if data_l is None or data_r is None:
+                # Create placeholder if data missing
+                plots.append(hv.Text(0, 0, f'No {trial_type} data').opts(width=400, height=300))
+                plots.append(hv.Text(0, 0, f'No {trial_type} data').opts(width=400, height=300))
+                continue
+            
+            params_l = data_l['params']
+            params_r = data_r['params']
+            
+            # Determine alignment and xlabel
+            if trial_type == 'GO':
+                alignment = 'go_cue'
+                xlabel = 'Time from go_cue (ms)'
+            else:
+                alignment = 'stop_cue'
+                xlabel = 'Time from stop_cue (ms)'
+            
+            # Left direction heatmap
+            img_left = hv.Image(
+                data_l['psth_matrix'],
+                kdims=['Time', 'Neurons'],
+                vdims='Firing Rate',
+                bounds=(params_l['epok'][0], 0, params_l['epok'][1], n_cells)
+            ).opts(
+                cmap='Plasma',
+                colorbar=True,
+                width=400,
+                height=300,
+                xlabel=xlabel,
+                ylabel='Neurons',
+                title=f'{trial_type} - Left (180°)',
+                invert_yaxis=False,
+                tools=['hover']
+            )
+            
+            # Right direction heatmap
+            img_right = hv.Image(
+                data_r['psth_matrix'],
+                kdims=['Time', 'Neurons'],
+                vdims='Firing Rate',
+                bounds=(params_r['epok'][0], 0, params_r['epok'][1], n_cells)
+            ).opts(
+                cmap='Plasma',
+                colorbar=True,
+                width=400,
+                height=300,
+                xlabel=xlabel,
+                ylabel='Neurons',
+                title=f'{trial_type} - Right (0°)',
+                invert_yaxis=False,
+                tools=['hover']
+            )
+            
+            plots.extend([img_left, img_right])
+        
+        # Create 3×2 layout (3 rows, 2 columns)
+        return hv.Layout(plots).cols(2)
+    
+    def plot_trial_type_by_ssd(self, trial_type='STOP', ssd_numbers=None, **kwargs):
+        """
+        Plot STOP or CONT trials separated by SSD number, for both left and right directions.
+        Creates a 4×2 grid with:
+        - Rows: SSD numbers (SSD1, SSD2, SSD3, SSD4)
+        - Columns: Left (180°) and Right (0°) directions
+        
+        All plots use the same cell ordering (based on GO left direction peaks).
+        
+        Parameters:
+        -----------
+        trial_type : str, optional
+            'STOP' or 'CONT'. Default is 'STOP'
+        ssd_numbers : list, optional
+            List of SSD numbers to plot. If None, uses all available SSDs
+        **kwargs : dict
+            Parameters for data generation:
+            - epok_stop : list, time window for STOP/CONT trials
+            - bin_size : int, bin size in ms
+            - success_only : bool, include only successful trials
+            - smooth : bool, apply Gaussian smoothing
+            - normalize : bool, normalize firing rates
+        
+        Returns:
+        --------
+        hv.Layout : 4×2 grid of heatmaps (SSD by direction)
+        """
+        # Validate trial_type
+        if trial_type not in ['STOP', 'CONT']:
+            print(f"Invalid trial_type '{trial_type}'. Must be 'STOP' or 'CONT'")
+            return None
+        
+        # Get available SSD numbers if not specified
+        if ssd_numbers is None:
+            stop_cont_data = self.data[self.data['type'] == trial_type]
+            ssd_numbers = sorted([x for x in stop_cont_data['ssd_number'].unique() if pd.notna(x)])
+        
+        # Get reference cell ordering from GO trials (left direction)
+        epok_go = kwargs.get('epok_go', kwargs.get('epok_stop', [-200, 700]))
+        bin_size = kwargs.get('bin_size', 10)
+        success_only = kwargs.get('success_only', True)
+        smooth = kwargs.get('smooth', True)
+        normalize = kwargs.get('normalize', True)
+        
+        # Get GO data for cell ordering
+        data_go = self.get_population_data_single_condition(
+            epok=epok_go, bin_size=bin_size, alignment_point='go_cue',
+            trial_type='GO', direction=180, ssd_number=None,
+            success_only=success_only, smooth=smooth, normalize=normalize,
+            sort_by_peak=True
+        )
+        
+        if data_go is None:
+            print("No GO trial data for establishing cell order")
+            return None
+        
+        cell_order = data_go['cell_ids']
+        n_cells = len(cell_order)
+        
+        # Get epoch for STOP/CONT trials
+        epok_stop = kwargs.get('epok_stop', [-200, 700])
+        
+        # Create plots for each SSD, with left/right as columns
+        plots = []
+        
+        for ssd in ssd_numbers:
+            # Create left and right plots for this SSD
+            for direction, dir_label in [(180, 'Left'), (0, 'Right')]:
+                # Get data for this condition
+                data = self.get_population_data_single_condition(
+                    epok=epok_stop, bin_size=bin_size, alignment_point='stop_cue',
+                    trial_type=trial_type, direction=direction, ssd_number=ssd,
+                    success_only=success_only, smooth=smooth, normalize=normalize,
+                    sort_by_peak=False
+                )
+                
+                if data is None or len(data['cell_ids']) == 0:
+                    # Create placeholder
+                    plots.append(
+                        hv.Text(0, 0, f'No data').opts(
+                            width=400, height=250, 
+                            title=f'{trial_type} SSD {int(ssd)} - {dir_label} ({direction}°)'
+                        )
+                    )
+                    continue
+                
+                # Reorder to match reference cell order
+                cell_to_idx = {cell: idx for idx, cell in enumerate(data['cell_ids'])}
+                reordered_matrix = np.zeros((len(cell_order), data['psth_matrix'].shape[1]))
+                
+                for new_idx, cell_id in enumerate(cell_order):
+                    if cell_id in cell_to_idx:
+                        old_idx = cell_to_idx[cell_id]
+                        reordered_matrix[new_idx] = data['psth_matrix'][old_idx]
+                
+                params = data['params']
+                
+                # Create heatmap
+                img = hv.Image(
+                    reordered_matrix,
+                    kdims=['Time', 'Neurons'],
+                    vdims='Firing Rate',
+                    bounds=(params['epok'][0], 0, params['epok'][1], n_cells)
+                ).opts(
+                    cmap='Plasma',
+                    colorbar=True,
+                    width=400,
+                    height=250,
+                    xlabel='Time from stop_cue (ms)',
+                    ylabel='Neurons',
+                    title=f'{trial_type} SSD {int(ssd)} - {dir_label} ({direction}°)',
+                    invert_yaxis=False,
+                    tools=['hover'],
+                    fontsize={'title': 10, 'labels': 9, 'ticks': 8}
+                )
+                
+                plots.append(img)
+        
+        # Create layout with 2 columns (Left, Right)
+        return hv.Layout(plots).cols(2)
