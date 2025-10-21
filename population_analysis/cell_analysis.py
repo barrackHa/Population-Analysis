@@ -140,7 +140,7 @@ class MSNCell:
         
         return filtered
     
-    def plot_raster(self, alignment_point='go_cue', epok=[-500, 1000], 
+    def plot_raster(self, alignment_point='go_cue', epok=[-200, 500], 
                    color_by='type', **filter_kwargs):
         """
         Create a raster plot of spike times across trials.
@@ -219,7 +219,7 @@ class MSNCell:
         
         return plot
     
-    def plot_raster_by_type_direction(self, epok=[-200, 700], 
+    def plot_raster_by_type_direction(self, epok=[-200, 500], 
                                       alignment_point='go_cue', show_legend=True):
         """
         Create separate raster plots for each trial type and direction combination.
@@ -291,7 +291,7 @@ class MSNCell:
         
         return plots
     
-    def aggregate_spikes_by_bins(self, epok=[-200, 700], bin_size=10,
+    def aggregate_spikes_by_bins(self, epok=[-200, 500], bin_size=10,
                                  alignment_point='go_cue', trial_type=None, 
                                  direction=None, ssd_number=None, 
                                  success_only=True, normalize=False):
@@ -357,7 +357,7 @@ class MSNCell:
         
         return bin_centers, spike_counts, len(filtered_data)
     
-    def calculate_psth(self, epok=[-200, 700], bin_size=10,
+    def calculate_psth(self, epok=[-200, 500], bin_size=10,
                       alignment_point='go_cue', trial_type=None, direction=None,
                       ssd_number=None, success_only=True, smooth=True):
         """
@@ -416,7 +416,7 @@ class MSNCell:
         
         return bin_centers, firing_rate, n_trials
     
-    def plot_histogram_by_type_direction(self, epok=[-200, 700], bin_size=10,
+    def plot_histogram_by_type_direction(self, epok=[-200, 500], bin_size=10,
                                         alignment_point='go_cue', separate_ssd=False,
                                         normalize=False):
         """
@@ -579,7 +579,7 @@ class MSNCell:
         
         return plots
     
-    def plot_psth_by_type_direction(self, epok=[-200, 700], bin_size=10,
+    def plot_psth_by_type_direction(self, epok=[-200, 500], bin_size=10,
                                     alignment_point='go_cue', separate_ssd=False,
                                     smooth=True):
         """
