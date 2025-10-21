@@ -18,6 +18,7 @@ import numpy as np
 import holoviews as hv
 from holoviews import opts
 from scipy.ndimage import gaussian_filter1d
+import hvplot.pandas  # Enable hvplot for pandas DataFrames
 from bokeh.palettes import Colorblind8, TolRainbow8
 
 
@@ -192,50 +193,37 @@ class MSNCell:
         overlay = hv.NdOverlay()
 
         # print(plot_data.data['spikes_aligned_to_go_cue'])
+        col_names = np.array(range(epok[0], epok[1] + 1, 1))
+        print(f'col_names: {col_names[300:306]}')
         spikes_arr = pd.DataFrame(
             np.zeros(
-                (plot_data.data.shape[0], (epok[1] - epok[0] + 1))
+                (plot_data.data.shape[0], col_names.size)
             ),
-            columns=np.arange(epok[0], epok[1] + 1)
+            columns=col_names
         )
-        # print(spikes_arr)
+        print(spikes_arr.columns.value_counts().max(), spikes_arr.columns.shape)
         plot_data.data = plot_data.data.sort_values(
             by=['type', 'ssd_number', 'dir']
         ).reset_index(drop=True)
 
         for i, (idx, row) in enumerate(plot_data.data.iterrows()):
             col = plot_data.data['spikes_aligned_to_go_cue'].iloc[idx]
-            col = col[(col >= epok[0]) & (col <= epok[1])].astype(int)
+            col = np.unique(col[(col >= epok[0]) & (col <= epok[1])].astype(int))
             color_int = row['ssd_number'] if not pd.isna(row['ssd_number']) else 1
             color_int = (color_int * 2) if row['dir'] == 180 else color_int
             spikes_arr.loc[idx, col] = int(color_int)
+            if spikes_arr.columns.value_counts().max() > 1:
+                print(f"Warning: Multiple spikes in the same ms for trial index {idx}")
+                raise ValueError(col, i, idx, row)
 
-            
-        colors = [c for c in Colorblind8]
-        colors[0] = '#ffffff'
-        print(colors)
-          # Set first color to white for zero spikes
+        colors = ['#ffffff'] + list(Colorblind8[-4:])
+        # Set first color to white for zero spikes
+        print(spikes_arr.columns.value_counts().max())
+        print(spikes_arr.columns.shape)
         overlay *= spikes_arr.hvplot.heatmap(x='columns', y='index').opts(
             cmap=colors, colorbar=False, width=800, height=600
         )
 
-        # for i, (idx, row) in enumerate(plot_data.data.iterrows()):
-        #     spikes = row[col_name]
-        #     # Filter spikes within epoch
-        #     spikes_in_epok = spikes[(spikes >= epok[0]) & (spikes <= epok[1])]
-            
-        #     # Placeholder for empty trials
-        #     # overlay *= hv.Spikes([(epok[1] + 1)], kdims='Time').opts(
-        #     #     position=i, color='black', alpha=1, spike_length=0.9, line_width=2
-        #     # )  
-        #     if len(spikes_in_epok) > 0:
-        #         spike_plot = hv.Spikes(
-        #             spikes_in_epok, kdims='Time'
-        #         ).opts(
-        #             position=i, color=colors[i], spike_length=0.9, line_width=2
-        #         )
-        #         overlay *= spike_plot
-        
         # Configure plot
         title = f"Cell {self.cell_id} - Raster Plot (aligned to {alignment_point})"
         if filter_kwargs:
@@ -243,14 +231,11 @@ class MSNCell:
             title += f" | Filters: {filter_str}"
         
         plot = overlay.opts(
-            # opts.Spikes(spike_length=0.9, line_width=2),
             opts.NdOverlay(
                 xlabel=f'Time from {alignment_point} (ms)',
                 ylabel='Trial #',
                 title=title,
                 width=800, height=600,
-                # show_legend=False,
-                # show_grid=True,
                 xlim=(epok[0], epok[1])
             )
         )
@@ -261,8 +246,9 @@ class MSNCell:
                                       alignment_point='go_cue', show_legend=True):
         """
         Create separate raster plots for each trial type and direction combination.
+        Uses the heatmap-based raster plot method to ensure even presentation of all trials.
         - Only successful trials (trial_failed = False)
-        - Color coded by SSD number
+        - Color coded by SSD number and direction
         - Sorted by SSD number within each plot
         
         Parameters:
@@ -278,102 +264,50 @@ class MSNCell:
         --------
         dict : Nested dictionary {direction: {trial_type: plot}}
         """
-        # Align spikes
-        self.align_spikes_to_event(alignment_point)
-        col_name = f'spikes_aligned_to_{alignment_point}'
-        
-        # Color palette for SSD numbers (handle both GO trials without SSD and STOP/CONT with SSD)
-        ssd_colors = {
-            1.0: '#e377c2',  # Pink
-            2.0: '#8c564b',  # Brown
-            3.0: '#bcbd22',  # Yellow-green
-            4.0: '#17becf',  # Cyan
-            'GO': '#2ca02c'  # Green for GO trials (no SSD)
-        }
-        
         plots = {}
-        
         for direction in self.directions:
             dir_label = "Right (0°)" if direction == 0 else "Left (180°)"
             plots[direction] = {}
             
             for trial_type in ['GO', 'STOP', 'CONT']:
-                # Filter: direction, trial_type, success only
-                filtered_data = self.filter_trials(
-                    direction=direction,
-                    trial_type=trial_type,
-                    success_only=True
-                )
-                
-                if len(filtered_data) == 0:
-                    continue
-                
-                # Sort by SSD number
-                filtered_data = filtered_data.sort_values(by='ssd_number').reset_index(drop=True)
-                
-                # Create raster
-                overlay = hv.NdOverlay()
-                
-                for i, (idx, row) in enumerate(filtered_data.iterrows()):
-                    spikes = row[col_name]
-                    spikes_in_epok = spikes[(spikes >= epok[0]) & (spikes <= epok[1])]
+                print('trial_type:', trial_type, ' direction:', direction)
+                # Use the plot_raster method with appropriate filters
+                # This delegates to the heatmap-based implementation
+                try:
+                    plot = self.plot_raster(
+                        alignment_point=alignment_point,
+                        epok=epok,
+                        color_by='ssd',  # Color by SSD number
+                        direction=direction,
+                        trial_type=trial_type,
+                        success_only=True
+                    )
                     
-                    # Determine color based on SSD number
-                    if trial_type == 'GO':
-                        color = ssd_colors['GO']
-                    else:
-                        ssd_num = row['ssd_number']
-                        color = ssd_colors.get(ssd_num, '#7f7f7f')  # Gray as fallback
+                    # Customize the title to match the original format
+                    legend_text = ""
+                    if show_legend:
+                        if trial_type == 'GO':
+                            legend_text = "\nColors: Intensity indicates trial presence"
+                        else:
+                            legend_text = "\nColors: Different intensities for SSD1-4"
                     
-                    # Plot spikes
-                    if len(spikes_in_epok) > 0:
-                        spike_plot = hv.Spikes(
-                            spikes_in_epok, kdims='Time'
-                        ).opts(
-                            position=i, color=color, spike_length=0.9, line_width=3
+                    title_text = f"Cell {self.cell_id} - {trial_type} trials - {dir_label} (Success Only){legend_text}"
+                    
+                    # Update plot options with custom title and dimensions
+                    plot = plot.opts(
+                        opts.NdOverlay(
+                            title=title_text,
+                            ylabel='Trial # (sorted by SSD)',
+                            height=300
                         )
-                        overlay *= spike_plot
+                    )
                     
-                    # Mark stop_cue with vertical line segment for STOP/CONT trials
-                    if trial_type in ['STOP', 'CONT'] and not pd.isna(row['stop_cue']):
-                        stop_time = row['stop_cue'] - row['go_cue'] if alignment_point == 'go_cue' else 0
-                        if epok[0] <= stop_time <= epok[1]:
-                            stop_marker = hv.Curve(
-                                [(stop_time, i-0.4), (stop_time, i+0.4)],
-                                kdims='Time', vdims='Trial'
-                            ).opts(color='black', line_width=2, alpha=0.6)
-                            overlay *= stop_marker
-                
-                # Add vertical line at t=0 (alignment point)
-                zero_line = hv.VLine(0).opts(color='red', line_width=2, line_dash='dashed', alpha=0.7)
-                
-                # Create legend text
-                legend_text = "Colors: "
-                if trial_type == 'GO':
-                    legend_text += "Green=GO trials (no SSD)"
-                else:
-                    legend_text += "Pink=SSD1, Brown=SSD2, Yellow-green=SSD3, Cyan=SSD4"
-                
-                # Combine and configure
-                title_text = f"Cell {self.cell_id} - {trial_type} trials - {dir_label} (Success Only)"
-                if show_legend:
-                    title_text += f"\n{legend_text}"
-                
-                plot = (overlay * zero_line).opts(
-                    opts.NdOverlay(
-                        xlabel=f'Time from {alignment_point} (ms)',
-                        ylabel='Trial # (sorted by SSD)',
-                        title=title_text,
-                        width=800, height=300,
-                        show_legend=False,
-                        show_grid=True,
-                        xlim=(epok[0], epok[1]),
-                        ylim=(-1, len(filtered_data))
-                    ),
-                    opts.VLine(color='red', line_width=2, line_dash='dashed')
-                )
-                
-                plots[direction][trial_type] = plot
+                    plots[direction][trial_type] = plot
+                    
+                except Exception as e:
+                    # If there's no data for this combination, skip it
+                    print(f"No data for {trial_type} - {dir_label}: {e}")
+                    continue
         
         return plots
     

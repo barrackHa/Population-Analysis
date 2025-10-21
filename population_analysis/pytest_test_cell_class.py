@@ -442,58 +442,37 @@ raster_grid = viz_cell.plot_raster_by_type_direction(
 raster_grid
 
 # %% Plot 4: PSTH for GO trials with different alignments
-# Plot PSTH aligned to go_cue
-psth_go = viz_cell.plot_psth(
+# Plot PSTH aligned to go_cue using plot_psth_by_type_direction
+psth_go = viz_cell.plot_psth_by_type_direction(
     alignment_point='go_cue',
-    trial_type='GO',
     epok=[-50, 200],
     bin_size=20,
+    separate_ssd=False,
     smooth=True
 )
 psth_go
 
 # %% Plot 5: Compare STOP and CONT trials aligned to stop_cue
-# STOP trials
-psth_stop = viz_cell.plot_psth(
+# STOP and CONT trials visualized using plot_psth_by_type_direction
+psth_stop_cont = viz_cell.plot_psth_by_type_direction(
     alignment_point='stop_cue',
-    trial_type='STOP',
     epok=[-300, 300],
     bin_size=50,
+    separate_ssd=True,  # Show separate lines for each SSD
     smooth=True
 )
-psth_stop
+psth_stop_cont
 
-# %% CONT trials
-psth_cont = viz_cell.plot_psth(
-    alignment_point='stop_cue',
-    trial_type='CONT',
-    epok=[-300, 300],
-    bin_size=50,
-    smooth=True
-)
-psth_cont
-
-# %% Plot 6: Compare different directions for GO trials
-psth_go_left = viz_cell.plot_psth(
+# %% Plot 6: Histogram plots for different trial types
+# Using plot_histogram_by_type_direction to show spike counts
+histograms = viz_cell.plot_histogram_by_type_direction(
     alignment_point='go_cue',
-    trial_type='GO',
-    direction=180,
     epok=[-50, 200],
     bin_size=20,
-    smooth=True
+    separate_ssd=False,
+    normalize=False
 )
-psth_go_left
-
-# %%
-psth_go_right = viz_cell.plot_psth(
-    alignment_point='go_cue',
-    trial_type='GO',
-    direction=0,
-    epok=[-50, 200],
-    bin_size=20,
-    smooth=True
-)
-psth_go_right
+histograms
 
 # %% Plot 7: Summary statistics with matplotlib
 fig, axes = plt.subplots(2, 2, figsize=(14, 10))
