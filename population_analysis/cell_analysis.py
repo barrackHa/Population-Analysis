@@ -33,7 +33,7 @@ class MSNCell:
     TYPE_COLORS = {'GO': '#2ca02c', 'STOP': '#d62728', 'CONT': '#9467bd'}  # Green, Red, Purple
     SSD_COLORS = {1: '#e377c2', 2: '#8c564b', 3: '#bcbd22', 4: '#17becf'}  # Different colors for each SSD
     
-    def __init__(self, cell_df):
+    def __init__(self, cell_df, verbose=False):
         """
         Initialize MSN cell with its trial data.
         
@@ -55,11 +55,12 @@ class MSNCell:
         self.directions = sorted(self.data['dir'].unique())
         self.ssd_numbers = sorted(self.data['ssd_number'].dropna().unique())
         
-        print(f"Cell {self.cell_id} initialized:")
-        print(f"  - Total trials: {len(self.data)}")
-        print(f"  - Trial types: {self.trial_types}")
-        print(f"  - Directions: {self.directions}")
-        print(f"  - SSD numbers: {self.ssd_numbers}")
+        if verbose:
+            print(f"Cell {self.cell_id} initialized:")
+            print(f"  - Total trials: {len(self.data)}")
+            print(f"  - Trial types: {self.trial_types}")
+            print(f"  - Directions: {self.directions}")
+            print(f"  - SSD numbers: {self.ssd_numbers}")
     
     def align_spikes_to_event(self, alignment_point='go_cue'):
         """
@@ -170,44 +171,22 @@ class MSNCell:
         if col_name not in plot_data.data.columns:
             plot_data.align_spikes_to_event(alignment_point)
         
-        # Determine colors
-        if color_by == 'type':
-            colors = [self.TYPE_COLORS[row['type']] for _, row in plot_data.data.iterrows()]
-            legend_title = "Trial Type"
-        elif color_by == 'direction':
-            colors = [self.DIRECTION_COLORS[row['dir']] for _, row in plot_data.data.iterrows()]
-            legend_title = "Direction"
-        elif color_by == 'ssd':
-            colors = [self.SSD_COLORS.get(row['ssd_number'], '#7f7f7f') 
-                     for _, row in plot_data.data.iterrows()]
-            legend_title = "SSD Number"
-        elif color_by == 'outcome':
-            colors = ['#d62728' if row['trial_failed'] else '#2ca02c' 
-                     for _, row in plot_data.data.iterrows()]
-            legend_title = "Outcome"
-        else:
-            colors = ['#1f77b4'] * len(plot_data.data)
-            legend_title = ""
-        
         # Create raster plot
-        overlay = hv.NdOverlay()
-
-        # print(plot_data.data['spikes_aligned_to_go_cue'])
+        overlay = hv.Curve([])
         col_names = np.array(range(epok[0], epok[1] + 1, 1))
-        print(f'col_names: {col_names[300:306]}')
         spikes_arr = pd.DataFrame(
             np.zeros(
                 (plot_data.data.shape[0], col_names.size)
             ),
             columns=col_names
         )
-        print(spikes_arr.columns.value_counts().max(), spikes_arr.columns.shape)
+        
         plot_data.data = plot_data.data.sort_values(
             by=['type', 'ssd_number', 'dir']
         ).reset_index(drop=True)
 
         for i, (idx, row) in enumerate(plot_data.data.iterrows()):
-            col = plot_data.data['spikes_aligned_to_go_cue'].iloc[idx]
+            col = plot_data.data[f'spikes_aligned_to_{alignment_point}'].iloc[idx]
             col = np.unique(col[(col >= epok[0]) & (col <= epok[1])].astype(int))
             color_int = row['ssd_number'] if not pd.isna(row['ssd_number']) else 1
             color_int = (color_int * 2) if row['dir'] == 180 else color_int
@@ -216,10 +195,8 @@ class MSNCell:
                 print(f"Warning: Multiple spikes in the same ms for trial index {idx}")
                 raise ValueError(col, i, idx, row)
 
-        colors = ['#ffffff'] + list(Colorblind8[-4:])
-        # Set first color to white for zero spikes
-        print(spikes_arr.columns.value_counts().max())
-        print(spikes_arr.columns.shape)
+        colors = ['#ffffff',"#000000","#0072B2","#D55E00","#009E73"]
+        
         overlay *= spikes_arr.hvplot.heatmap(x='columns', y='index').opts(
             cmap=colors, colorbar=False, width=800, height=600
         )
@@ -231,7 +208,7 @@ class MSNCell:
             title += f" | Filters: {filter_str}"
         
         plot = overlay.opts(
-            opts.NdOverlay(
+            opts.HeatMap(
                 xlabel=f'Time from {alignment_point} (ms)',
                 ylabel='Trial #',
                 title=title,
@@ -268,9 +245,12 @@ class MSNCell:
         for direction in self.directions:
             dir_label = "Right (0°)" if direction == 0 else "Left (180°)"
             plots[direction] = {}
+
+            trials = ['GO', 'STOP', 'CONT']
+            if alignment_point != 'go_cue':
+                trials.remove('GO')
             
-            for trial_type in ['GO', 'STOP', 'CONT']:
-                print('trial_type:', trial_type, ' direction:', direction)
+            for trial_type in trials:
                 # Use the plot_raster method with appropriate filters
                 # This delegates to the heatmap-based implementation
                 try:
@@ -295,7 +275,7 @@ class MSNCell:
                     
                     # Update plot options with custom title and dimensions
                     plot = plot.opts(
-                        opts.NdOverlay(
+                        opts.HeatMap(
                             title=title_text,
                             ylabel='Trial # (sorted by SSD)',
                             height=300
