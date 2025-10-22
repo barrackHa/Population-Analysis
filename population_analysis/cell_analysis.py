@@ -19,7 +19,8 @@ import holoviews as hv
 from holoviews import opts
 from scipy.ndimage import gaussian_filter1d
 import hvplot.pandas  # Enable hvplot for pandas DataFrames
-from bokeh.palettes import Colorblind8, TolRainbow8
+from scipy.stats import zscore
+from numpy.exceptions import AxisError
 
 
 class MSNCell:
@@ -31,7 +32,12 @@ class MSNCell:
     # Color schemes for different trial conditions
     DIRECTION_COLORS = {0: '#1f77b4', 180: '#ff7f0e'}  # Blue for right (0°), Orange for left (180°)
     TYPE_COLORS = {'GO': '#2ca02c', 'STOP': '#d62728', 'CONT': '#9467bd'}  # Green, Red, Purple
-    SSD_COLORS = {1: '#e377c2', 2: '#8c564b', 3: '#bcbd22', 4: '#17becf'}  # Different colors for each SSD
+    SSD_COLORS = {
+        1: '#000000', 2: '#0072B2', 3: '#D55E00', 4: '#009E73',
+        'GO': '#2ca02c',  # Green for GO trials
+        'combined': '#1f77b4' 
+    }  # Different colors for each SSD
+    
     
     def __init__(self, cell_df, verbose=False):
         """
@@ -195,7 +201,10 @@ class MSNCell:
                 print(f"Warning: Multiple spikes in the same ms for trial index {idx}")
                 raise ValueError(col, i, idx, row)
 
-        colors = ['#ffffff',"#000000","#0072B2","#D55E00","#009E73"]
+        # First color is white for no spikes
+        colors = ['#ffffff'] + [
+            self.SSD_COLORS[key] for key in range(1,5)
+        ]
         
         overlay *= spikes_arr.hvplot.heatmap(x='columns', y='index').opts(
             cmap=colors, colorbar=False, width=800, height=600
@@ -291,7 +300,7 @@ class MSNCell:
         
         return plots
     
-    def aggregate_spikes_by_bins(self, epok=[-200, 500], bin_size=10,
+    def aggregate_spikes_by_bins(self, epok=[-200, 500], bin_size=11,
                                  alignment_point='go_cue', trial_type=None, 
                                  direction=None, ssd_number=None, 
                                  success_only=True, normalize=False):
@@ -301,7 +310,7 @@ class MSNCell:
         Parameters:
         -----------
         epok : list
-            Time window [start, end] in ms (default: [-200, 700])
+            Time window [start, end] in ms (default: [-200, 500])
         bin_size : int
             Bin size in ms (default: 10)
         alignment_point : str
@@ -352,14 +361,18 @@ class MSNCell:
             spike_counts += counts
         
         # Normalize if requested
-        if normalize and spike_counts.max() > 0:
-            spike_counts = spike_counts / spike_counts.max()
+        if normalize:
+            try:
+                spike_counts = zscore(spike_counts, axis=1)
+            except AxisError:
+                spike_counts = zscore(spike_counts)
         
         return bin_centers, spike_counts, len(filtered_data)
     
     def calculate_psth(self, epok=[-200, 500], bin_size=10,
                       alignment_point='go_cue', trial_type=None, direction=None,
-                      ssd_number=None, success_only=True, smooth=True):
+                      ssd_number=None, success_only=True, smooth=True, delta=False,
+                      smooth_ker_size=25, normalize_bins=False):
         """
         Calculate PSTH (peri-stimulus time histogram) with firing rate and Gaussian smoothing.
         
@@ -381,6 +394,12 @@ class MSNCell:
             Include only successful trials (default: True)
         smooth : bool
             If True, apply Gaussian smoothing with sigma=bin_size (default: True)
+        smooth_ker_size : int
+            Kernel size for Gaussian smoothing (default: 25)
+        delta: bool
+            if True looke center to the mean firing rate
+        normalize_bins : bool
+            If True, z-score spike counts before calculating firing rate (default: False)
         
         Returns:
         --------
@@ -398,7 +417,7 @@ class MSNCell:
             direction=direction,
             ssd_number=ssd_number,
             success_only=success_only,
-            normalize=False
+            normalize=normalize_bins
         )
         
         if bin_centers is None:
@@ -406,17 +425,17 @@ class MSNCell:
         
         # Convert spike counts to firing rate (spikes/sec)
         # spike_counts is total spikes across all trials
-        # firing_rate = (spike_counts / n_trials) / (bin_size / 1000)
         firing_rate = (spike_counts / n_trials) / (bin_size / 1000)
+        if delta:
+            firing_rate = firing_rate - np.mean(firing_rate)
         
         # Apply Gaussian smoothing if requested
-        # sigma=bin_size, truncate=2 gives radius of 2 standard deviations
         if smooth:
-            firing_rate = gaussian_filter1d(firing_rate, sigma=bin_size, truncate=2)
+            firing_rate = gaussian_filter1d(firing_rate, sigma=smooth_ker_size)
         
         return bin_centers, firing_rate, n_trials
     
-    def plot_histogram_by_type_direction(self, epok=[-200, 500], bin_size=10,
+    def plot_histogram_by_type_direction(self, epok=[-200, 500], bin_size=1,
                                         alignment_point='go_cue', separate_ssd=False,
                                         normalize=False):
         """
@@ -443,15 +462,8 @@ class MSNCell:
         dict : Nested dictionary {direction: {trial_type: plot}}
         """
         # Color palette for SSD numbers
-        ssd_colors = {
-            1.0: '#e377c2',  # Pink
-            2.0: '#8c564b',  # Brown
-            3.0: '#bcbd22',  # Yellow-green
-            4.0: '#17becf',  # Cyan
-            'GO': '#2ca02c',  # Green for GO trials
-            'combined': '#1f77b4'  # Blue for combined
-        }
-        
+        ssd_colors = self.SSD_COLORS
+
         plots = {}
         
         for direction in self.directions:
@@ -498,7 +510,7 @@ class MSNCell:
                             vdims='Spike Count' if not normalize else 'Normalized Spike Count',
                             label=f'SSD{int(ssd_num)} (n={n_trials})'
                         ).opts(
-                            color=ssd_colors.get(ssd_num, '#7f7f7f'),
+                            color=ssd_colors.get(int(ssd_num), '#7f7f7f'),
                             alpha=0.6,
                             line_width=0
                         )
@@ -580,8 +592,10 @@ class MSNCell:
         return plots
     
     def plot_psth_by_type_direction(self, epok=[-200, 500], bin_size=10,
-                                    alignment_point='go_cue', separate_ssd=False,
-                                    smooth=True):
+                                    alignment_point='go_cue', 
+                                    separate_ssd=False, smooth=True, 
+                                    smooth_ker_size=25, delta=False, 
+                                    normalize_bins=False):
         """
         Create PSTH (peri-stimulus time histogram) plots for each trial type and direction.
         - Only successful trials (trial_failed = False)
@@ -600,20 +614,17 @@ class MSNCell:
             If True, create separate PSTHs for each SSD. If False, combine all SSDs.
         smooth : bool
             If True, apply Gaussian smoothing with sigma=bin_size (default: True)
+        smooth_ker_size : int
+            Kernel size for Gaussian smoothing (default: 25)
+        delta: bool
+            if True looke center to the mean firing rate
         
         Returns:
         --------
         dict : Nested dictionary {direction: {trial_type: plot}}
         """
         # Color palette for SSD numbers
-        ssd_colors = {
-            1.0: '#e377c2',  # Pink
-            2.0: '#8c564b',  # Brown
-            3.0: '#bcbd22',  # Yellow-green
-            4.0: '#17becf',  # Cyan
-            'GO': '#2ca02c',  # Green for GO trials
-            'combined': '#1f77b4'  # Blue for combined
-        }
+        ssd_colors = self.SSD_COLORS
         
         plots = {}
         
@@ -634,7 +645,7 @@ class MSNCell:
                 
                 if separate_ssd and trial_type != 'GO':
                     # Create separate curves for each SSD
-                    overlay = hv.NdOverlay()
+                    plot_elements = {}
                     
                     ssd_numbers = sorted(test_data['ssd_number'].dropna().unique())
                     for ssd_num in ssd_numbers:
@@ -646,7 +657,10 @@ class MSNCell:
                             direction=direction,
                             ssd_number=ssd_num,
                             success_only=True,
-                            smooth=smooth
+                            smooth=smooth,
+                            smooth_ker_size=smooth_ker_size,
+                            delta=delta,
+                            normalize_bins=normalize_bins
                         )
                         
                         if bin_centers is None:
@@ -660,9 +674,9 @@ class MSNCell:
                             label=f'SSD{int(ssd_num)} (n={n_trials})'
                         ).opts(
                             color=ssd_colors.get(ssd_num, '#7f7f7f'),
-                            line_width=2
+                            line_width=2, tools=['hover']
                         )
-                        overlay *= curve
+                        plot_elements[f'SSD{int(ssd_num)}'] = curve
                     
                     # Add vertical line at t=0
                     zero_line = hv.VLine(0).opts(
@@ -671,18 +685,16 @@ class MSNCell:
                     
                     # Combine and configure
                     smoothed_label = " (smoothed)" if smooth else ""
-                    plot = (overlay * zero_line).opts(
-                        opts.Curve(tools=['hover']),
+                    plot = (hv.NdOverlay(plot_elements) * zero_line).opts(
                         opts.NdOverlay(
                             xlabel=f'Time from {alignment_point} (ms)',
                             ylabel='Firing Rate (spikes/s)',
                             title=f"Cell {self.cell_id} - {trial_type} trials - {dir_label} (Success Only)\nPSTH by SSD (bin={bin_size}ms{smoothed_label})",
                             width=800, height=300,
-                            legend_position='right',
+                            legend_position='top',
                             show_grid=True,
                             xlim=(epok[0], epok[1])
                         ),
-                        opts.VLine(color='red', line_width=2, line_dash='dashed')
                     )
                     
                 else:
@@ -694,7 +706,10 @@ class MSNCell:
                         trial_type=trial_type,
                         direction=direction,
                         success_only=True,
-                        smooth=smooth
+                        smooth=smooth, 
+                        smooth_ker_size=smooth_ker_size,
+                        delta=delta,
+                        normalize_bins=normalize_bins
                     )
                     
                     if bin_centers is None:
