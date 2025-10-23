@@ -237,9 +237,9 @@ Unified cell-trial database stored as pickle file: `msn_fiona_cell_trial_data.pk
 ```
 PopulationAnalyzer (analysis.ipynb)
 ├── Manages full cell database
-└── Creates → MSNCell objects
+└── Creates → Cell objects
 
-MSNCell (analysis.ipynb)
+Cell (analysis.ipynb)
 ├── Single neuron analysis
 ├── Trial-level operations
 └── Individual cell visualizations
@@ -250,7 +250,7 @@ Session (session_class.py)
 └── Population visualizations
 ```
 
-### MSNCell Class
+### Cell Class
 **Location**: `population_analysis/analysis.ipynb`
 
 **Purpose**: Single-cell analysis with trial-level visualizations
@@ -327,7 +327,7 @@ population_analysis/
 │   └── unified_cell_trial_data/
 │       └── msn_fiona_cell_trial_data.pkl  # Main database
 ├── population_analysis/
-│   ├── analysis.ipynb           # MSNCell class & single-cell analysis
+│   ├── analysis.ipynb           # Cell class & single-cell analysis
 │   ├── session_class.py         # Session class for population analysis
 │   ├── session_analysis.ipynb   # Session class demonstrations
 │   ├── maestro_file.py          # Maestro file parsing utilities
@@ -356,9 +356,9 @@ population_analysis/
   - Example 4b: CONT trials by SSD (4×2)
 
 #### 3. `analysis.ipynb`
-- **Purpose**: MSNCell class and single-cell analysis
+- **Purpose**: Cell class and single-cell analysis
 - **Size**: ~2000+ lines
-- **Main classes**: `MSNCell`, `PopulationAnalyzer`
+- **Main classes**: `Cell`, `PopulationAnalyzer`
 - **Includes**: Comprehensive single-cell visualizations
 
 ---
@@ -880,7 +880,7 @@ git status
 cell_df = pd.read_pickle('msn_fiona_cell_trial_data.pkl')
 
 # Single cell
-cell = MSNCell(cell_df[cell_df['cell_ID'] == cell_id])
+cell = Cell(cell_df[cell_df['cell_ID'] == cell_id])
 cell.plot_psth_by_type_direction(smooth=True)
 
 # Population

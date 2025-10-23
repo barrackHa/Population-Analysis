@@ -1,13 +1,13 @@
 """
 Test suite for cell_analysis module using pytest
 
-Creates synthetic test data to validate MSNCell and PopulationAnalyzer functionality.
+Creates synthetic test data to validate Cell and PopulationAnalyzer functionality.
 
 Run tests with: pytest pytest_test_cell_class.py -v
 
 Interactive Visualizations:
 The cells marked with #%% can be run interactively in VS Code's scientific mode
-to visualize the test data using the built-in MSNCell plotting methods:
+to visualize the test data using the built-in Cell plotting methods:
   - plot_raster() - Creates raster plots colored by type/direction
   - plot_raster_by_type_direction() - Organized grid of raster plots
   - plot_psth() - Firing rate analysis (PSTH)
@@ -16,7 +16,7 @@ to visualize the test data using the built-in MSNCell plotting methods:
 import pandas as pd
 import numpy as np
 import pytest
-from cell_analysis import MSNCell, PopulationAnalyzer
+from cell_analysis import Cell, PopulationAnalyzer
 
 
 @pytest.fixture
@@ -135,15 +135,15 @@ def test_cell_data():
 
 @pytest.fixture
 def test_cell(test_cell_data):
-    """Create an MSNCell instance with test data"""
-    return MSNCell(test_cell_data)
+    """Create a Cell instance with test data"""
+    return Cell(test_cell_data)
 
 
-class TestMSNCell:
-    """Test suite for MSNCell class"""
+class TestCell:
+    """Test suite for Cell class"""
     
     def test_initialization(self, test_cell):
-        """Test that MSNCell initializes correctly"""
+        """Test that Cell initializes correctly"""
         assert test_cell.cell_id == 9999
         assert test_cell.cell_type == 'MSN'
         assert len(test_cell.data) == 6
@@ -306,13 +306,13 @@ if __name__ == '__main__':
 # # Visualization of Test Data and Results
 # 
 # The following cells provide interactive visualizations using the built-in
-# plotting methods of the MSNCell class. Run these cells individually in VS Code's interactive mode.
+# plotting methods of the Cell class. Run these cells individually in VS Code's interactive mode.
 
 # %% Create test data for visualization
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from cell_analysis import MSNCell
+from cell_analysis import Cell
 
 # Set style for better-looking plots
 plt.rcParams['figure.figsize'] = (12, 8)
@@ -409,7 +409,7 @@ trials = [
 ]
 
 viz_data = pd.DataFrame(trials)
-viz_cell = MSNCell(viz_data)
+viz_cell = Cell(viz_data)
 
 print(f"Created test cell {viz_cell.cell_id} with {len(viz_cell.data)} trials")
 print(f"Trial types: {viz_cell.trial_types}")

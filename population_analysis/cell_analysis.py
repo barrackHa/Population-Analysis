@@ -5,7 +5,7 @@ This module contains classes for analyzing Medium Spiny Neuron (MSN) recordings
 during a countermanding stop-signal task (CSST).
 
 Classes:
-    - MSNCell: Single-cell analysis with raster plots, histograms, and PSTHs
+    - Cell: Single-cell analysis with raster plots, histograms, and PSTHs
     - PopulationAnalyzer: Population-level analysis across all cells
     - Session: Session-level population analysis with normalized heatmaps
 
@@ -23,7 +23,7 @@ from scipy.stats import zscore
 from numpy.exceptions import AxisError
 
 
-class MSNCell:
+class Cell:
     """
     Class representing a single MSN cell and its activity across trials.
     Handles spike alignment, raster plotting, and PSTH generation.
@@ -168,7 +168,7 @@ class MSNCell:
         """
         # Filter trials if requested
         if filter_kwargs:
-            plot_data = MSNCell(self.filter_trials(**filter_kwargs))
+            plot_data = Cell(self.filter_trials(**filter_kwargs))
         else:
             plot_data = self
         
@@ -674,7 +674,7 @@ class MSNCell:
                             label=f'SSD{int(ssd_num)} (n={n_trials})'
                         ).opts(
                             color=ssd_colors.get(ssd_num, '#7f7f7f'),
-                            line_width=2, tools=['hover']
+                            line_width=2, tools=['hover'], muted_alpha=0
                         )
                         plot_elements[f'SSD{int(ssd_num)}'] = curve
                     
@@ -778,7 +778,7 @@ class PopulationAnalyzer:
     
     def get_cell(self, cell_id):
         """
-        Get an MSNCell object for a specific cell.
+        Get a Cell object for a specific cell.
         
         Parameters:
         -----------
@@ -787,10 +787,10 @@ class PopulationAnalyzer:
         
         Returns:
         --------
-        MSNCell : Cell object
+        Cell : Cell object
         """
         cell_data = self.data[self.data['cell_ID'] == cell_id]
-        return MSNCell(cell_data)
+        return Cell(cell_data)
     
     def plot_figure_1b_style(self, cell_id=None, epok=[-500, 1500], 
                             ssd_to_show=None):

@@ -11,7 +11,7 @@ class Session:
     Data generation methods are separated from plotting methods.
     """
     
-    def __init__(self, session_df):
+    def __init__(self, session_df, verbose=False):
         """
         Initialize Session with all cells from a single recording session.
         
@@ -25,11 +25,12 @@ class Session:
         self.cell_ids = sorted(self.data['cell_ID'].unique())
         self.n_cells = len(self.cell_ids)
         
-        print(f"Session {self.session_id} initialized:")
-        print(f"  - Number of cells: {self.n_cells}")
-        print(f"  - Total trials: {len(self.data)}")
-        print(f"  - Trial types: {sorted(self.data['type'].unique())}")
-        print(f"  - Directions: {sorted(self.data['dir'].unique())}")
+        if verbose:
+            print(f"Session {self.session_id} initialized:")
+            print(f"  - Number of cells: {self.n_cells}")
+            print(f"  - Total trials: {len(self.data)}")
+            print(f"  - Trial types: {sorted(self.data['type'].unique())}")
+            print(f"  - Directions: {sorted(self.data['dir'].unique())}")
     
     def align_spikes_to_event(self, alignment_point='go_cue'):
         """
