@@ -351,7 +351,7 @@ class Cell:
         
         # Create bins
         bins = np.arange(epok[0], epok[1] + bin_size, bin_size)
-        bin_centers = bins[:-1] + bin_size / 2
+        bin_centers = bins[:-1] + bin_size // 2
         
         # Count spikes in each bin across all trials
         spike_counts = np.zeros(len(bins) - 1)
