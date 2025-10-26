@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import holoviews as hv
+from holoviews import opts
 from scipy.ndimage import gaussian_filter1d
 from cell_analysis import Cell
 
@@ -159,6 +160,112 @@ class Session:
                 psth_matrix = psth_matrix / global_max
         
         return bin_centers, psth_matrix, cells_used
+    
+    def get_cell_spike_counts(self, cell_id, epok=[-500, 1000], bin_size=1,
+                              alignment_point='go_cue', trial_type=None, direction=None,
+                              ssd_number=None, success_only=True, normalize=False):
+        """
+        Get aggregated spike counts for a specific cell.
+        
+        Parameters:
+        -----------
+        cell_id : int
+            Cell identifier
+        epok : list
+            Time window [start, end] in ms
+        bin_size : int
+            Bin size in ms
+        alignment_point : str
+            Event to align to
+        trial_type : str, optional
+            'GO', 'STOP', or 'CONT'
+        direction : int, optional
+            0 (right) or 180 (left)
+        ssd_number : int, optional
+            SSD number (1-4)
+        success_only : bool
+            Include only successful trials
+        normalize : bool
+            If True, z-score normalize spike counts
+            
+        Returns:
+        --------
+        tuple : (bin_centers, spike_counts, n_trials)
+        """
+        # Get data for this specific cell
+        # Note: No need to copy here since Cell.__init__ will make its own defensive copy
+        cell_data = self.data[self.data['cell_ID'] == cell_id]
+        
+        if len(cell_data) == 0:
+            return None, None, 0
+        
+        # Create a Cell instance for this cell (Cell.__init__ will copy the data)
+        cell = Cell(cell_data)
+        
+        # Use Cell's aggregate_spikes_by_bins method
+        bin_centers, spike_counts, n_trials = cell.aggregate_spikes_by_bins(
+            epok=epok,
+            bin_size=bin_size,
+            alignment_point=alignment_point,
+            trial_type=trial_type,
+            direction=direction,
+            ssd_number=ssd_number,
+            success_only=success_only,
+            normalize=normalize
+        )
+        
+        return bin_centers, spike_counts, n_trials
+    
+    def get_all_cells_spike_counts(self, epok=[-500, 1000], bin_size=1,
+                                    alignment_point='go_cue', trial_type=None, direction=None,
+                                    ssd_number=None, success_only=True, normalize=True):
+        """
+        Get aggregated spike counts for all cells in the session.
+        
+        Parameters:
+        -----------
+        Same as get_cell_spike_counts, plus:
+        normalize : bool
+            If True, each cell's spike counts are z-score normalized individually
+            
+        Returns:
+        --------
+        tuple : (bin_centers, spike_counts_matrix, cell_ids_used)
+            - bin_centers: time bins
+            - spike_counts_matrix: 2D array (n_cells X n_bins)
+            - cell_ids_used: list of cell IDs with data
+        """
+        spike_counts_list = []
+        cells_used = []
+        bin_centers = None
+        
+        # Collect spike counts with per-cell normalization
+        for cell_id in self.cell_ids:
+            bins, spike_counts, n_trials = self.get_cell_spike_counts(
+                cell_id=cell_id,
+                epok=epok,
+                bin_size=bin_size,
+                alignment_point=alignment_point,
+                trial_type=trial_type,
+                direction=direction,
+                ssd_number=ssd_number,
+                success_only=success_only,
+                normalize=normalize  # Pass normalization to each cell
+            )
+            
+            if bins is not None and n_trials > 0:
+                spike_counts_list.append(spike_counts)
+                cells_used.append(cell_id)
+                
+                if bin_centers is None:
+                    bin_centers = bins
+        
+        if len(spike_counts_list) == 0:
+            return None, None, []
+        
+        spike_counts_matrix = np.array(spike_counts_list)
+        
+        return bin_centers, spike_counts_matrix, cells_used
     
     # ==================== DATA GENERATION METHODS ====================
     
@@ -410,27 +517,119 @@ class Session:
         bin_centers = data['bin_centers']
         params = data['params']
         
-        # Create heatmap
-        # Image kdims are [x, y], so [Time, Neurons]
-        # psth_matrix is (neurons, time), which is what Image expects for the data
-        img = hv.Image(
+        # Create DataFrame for heatmap
+        psth_df = pd.DataFrame(
             psth_matrix,
-            kdims=['Time', 'Neurons'],
-            vdims='Firing Rate',
-            bounds=(params['epok'][0], 0, params['epok'][1], psth_matrix.shape[0])
-        ).opts(
-            cmap='Plasma',
-            colorbar=True,
-            width=800,
-            height=600,
-            xlabel=f'Time from {params["alignment_point"]} (ms)',
-            ylabel='Neurons',
-            title=f'Session {self.session_id} - {params["trial_type"] or "All"} trials - Dir {params["direction"] if params["direction"] is not None else "Both"}',
-            invert_yaxis=False,
-            tools=['hover']
+            columns=bin_centers,
+            index=range(psth_matrix.shape[0])
         )
         
-        return img
+        # Create heatmap
+        heatmap = psth_df.hvplot.heatmap(
+            x='columns',
+            y='index'
+        ).opts(
+            opts.HeatMap(
+                cmap='Plasma',
+                colorbar=True,
+                width=800,
+                height=600,
+                xlabel=f'Time from {params["alignment_point"]} (ms)',
+                ylabel='Neurons',
+                title=f'Session {self.session_id} - {params["trial_type"] or "All"} trials - Dir {params["direction"] if params["direction"] is not None else "Both"}',
+                invert_yaxis=False,
+                tools=['hover'],
+                clabel='Firing Rate',
+                xlim=(params['epok'][0], params['epok'][1])
+            )
+        )
+        
+        return heatmap
+    
+    def plot_population_spike_counts_heatmap(self, epok=[-500, 1000], bin_size=1,
+                                             alignment_point='go_cue', trial_type=None,
+                                             direction=None, ssd_number=None,
+                                             success_only=True, normalize=True,
+                                             sort_by_peak=True):
+        """
+        Plot a heatmap of all cells' spike counts in the session.
+        
+        Parameters:
+        -----------
+        epok : list
+            Time window [start, end] in ms
+        bin_size : int
+            Bin size in ms (default: 1)
+        alignment_point : str
+            Event to align to
+        trial_type : str, optional
+            'GO', 'STOP', or 'CONT'
+        direction : int, optional
+            0 (right) or 180 (left)
+        ssd_number : int, optional
+            SSD number (1-4)
+        success_only : bool
+            Include only successful trials
+        normalize : bool
+            If True, normalize all spike counts by global maximum
+        sort_by_peak : bool
+            Sort cells by time of peak activity
+        
+        Returns:
+        --------
+        hv.Image : Heatmap plot
+        """
+        # Get spike counts for all cells
+        bin_centers, spike_counts_matrix, cells_used = self.get_all_cells_spike_counts(
+            epok=epok,
+            bin_size=bin_size,
+            alignment_point=alignment_point,
+            trial_type=trial_type,
+            direction=direction,
+            ssd_number=ssd_number,
+            success_only=success_only,
+            normalize=normalize  # Pass normalization to the data method
+        )
+        
+        if spike_counts_matrix is None:
+            print("No data found for specified conditions")
+            return None
+        
+        # Sort by peak time if requested
+        if sort_by_peak:
+            peak_times = np.argmax(spike_counts_matrix, axis=1)
+            sort_idx = np.argsort(peak_times)
+            spike_counts_matrix = spike_counts_matrix[sort_idx]
+            cells_used = [cells_used[i] for i in sort_idx]
+        
+        # Create DataFrame for heatmap
+        spike_counts_df = pd.DataFrame(
+            spike_counts_matrix,
+            columns=bin_centers,
+            index=range(spike_counts_matrix.shape[0])
+        )
+        
+        # Create heatmap
+        heatmap = spike_counts_df.hvplot.heatmap(
+            x='columns',
+            y='index'
+        ).opts(
+            opts.HeatMap(
+                cmap='Plasma',
+                colorbar=True,
+                width=800,
+                height=600,
+                xlabel=f'Time from {alignment_point} (ms)',
+                ylabel='Neurons',
+                title=f'Session {self.session_id} - Spike Counts (bin={bin_size}ms)\n{trial_type or "All"} trials - Dir {direction if direction is not None else "Both"}',
+                invert_yaxis=False,
+                tools=['hover'],
+                clabel='Spike Count' if not normalize else 'Normalized Spike Count',
+                xlim=(epok[0], epok[1])
+            )
+        )
+        
+        return heatmap
     
     def plot_left_right_comparison(self, data=None, **kwargs):
         """
@@ -460,43 +659,61 @@ class Session:
         data_right = data['right']
         params_left = data_left['params']
         
-        # Create heatmaps
+        # Create DataFrames for heatmaps
         n_cells = data_left['psth_matrix'].shape[0]
-        img_left = hv.Image(
+        
+        psth_left_df = pd.DataFrame(
             data_left['psth_matrix'],
-            kdims=['Time', 'Neurons'],
-            vdims='Firing Rate',
-            bounds=(params_left['epok'][0], 0, params_left['epok'][1], n_cells)
-        ).opts(
-            cmap='Plasma',
-            colorbar=True,
-            width=400,
-            height=600,
-            xlabel=f'Time from {params_left["alignment_point"]} (ms)',
-            ylabel='Neurons',
-            title=f'Left (180°) - {params_left["trial_type"] or "All"}',
-            invert_yaxis=False,
-            tools=['hover']
+            columns=data_left['bin_centers'],
+            index=range(n_cells)
         )
         
-        img_right = hv.Image(
+        psth_right_df = pd.DataFrame(
             data_right['psth_matrix'],
-            kdims=['Time', 'Neurons'],
-            vdims='Firing Rate',
-            bounds=(params_left['epok'][0], 0, params_left['epok'][1], n_cells)
-        ).opts(
-            cmap='Plasma',
-            colorbar=True,
-            width=400,
-            height=600,
-            xlabel=f'Time from {params_left["alignment_point"]} (ms)',
-            ylabel='Neurons',
-            title=f'Right (0°) - {params_left["trial_type"] or "All"}',
-            invert_yaxis=False,
-            tools=['hover']
+            columns=data_right['bin_centers'],
+            index=range(n_cells)
         )
         
-        return (img_left + img_right).cols(2)
+        # Create heatmaps
+        heatmap_left = psth_left_df.hvplot.heatmap(
+            x='columns',
+            y='index'
+        ).opts(
+            opts.HeatMap(
+                cmap='Plasma',
+                colorbar=True,
+                width=400,
+                height=600,
+                xlabel=f'Time from {params_left["alignment_point"]} (ms)',
+                ylabel='Neurons',
+                title=f'Left (180°) - {params_left["trial_type"] or "All"}',
+                invert_yaxis=False,
+                tools=['hover'],
+                clabel='Firing Rate',
+                xlim=(params_left['epok'][0], params_left['epok'][1])
+            )
+        )
+        
+        heatmap_right = psth_right_df.hvplot.heatmap(
+            x='columns',
+            y='index'
+        ).opts(
+            opts.HeatMap(
+                cmap='Plasma',
+                colorbar=True,
+                width=400,
+                height=600,
+                xlabel=f'Time from {params_left["alignment_point"]} (ms)',
+                ylabel='Neurons',
+                title=f'Right (0°) - {params_left["trial_type"] or "All"}',
+                invert_yaxis=False,
+                tools=['hover'],
+                clabel='Firing Rate',
+                xlim=(params_left['epok'][0], params_left['epok'][1])
+            )
+        )
+        
+        return (heatmap_left + heatmap_right).cols(2)
     
     def plot_trial_type_comparison(self, data_left=None, data_right=None, **kwargs):
         """
@@ -585,43 +802,60 @@ class Session:
                 alignment = 'stop_cue'
                 xlabel = 'Time from stop_cue (ms)'
             
-            # Left direction heatmap
-            img_left = hv.Image(
+            # Create DataFrames for heatmaps
+            psth_left_df = pd.DataFrame(
                 data_l['psth_matrix'],
-                kdims=['Time', 'Neurons'],
-                vdims='Firing Rate',
-                bounds=(params_l['epok'][0], 0, params_l['epok'][1], n_cells)
+                columns=data_l['bin_centers'],
+                index=range(n_cells)
+            )
+            
+            psth_right_df = pd.DataFrame(
+                data_r['psth_matrix'],
+                columns=data_r['bin_centers'],
+                index=range(n_cells)
+            )
+            
+            # Left direction heatmap
+            heatmap_left = psth_left_df.hvplot.heatmap(
+                x='columns',
+                y='index'
             ).opts(
-                cmap='Plasma',
-                colorbar=True,
-                width=400,
-                height=300,
-                xlabel=xlabel,
-                ylabel='Neurons',
-                title=f'{trial_type} - Left (180°)',
-                invert_yaxis=False,
-                tools=['hover']
+                opts.HeatMap(
+                    cmap='Plasma',
+                    colorbar=True,
+                    width=400,
+                    height=300,
+                    xlabel=xlabel,
+                    ylabel='Neurons',
+                    title=f'{trial_type} - Left (180°)',
+                    invert_yaxis=False,
+                    tools=['hover'],
+                    clabel='Firing Rate',
+                    xlim=(params_l['epok'][0], params_l['epok'][1])
+                )
             )
             
             # Right direction heatmap
-            img_right = hv.Image(
-                data_r['psth_matrix'],
-                kdims=['Time', 'Neurons'],
-                vdims='Firing Rate',
-                bounds=(params_r['epok'][0], 0, params_r['epok'][1], n_cells)
+            heatmap_right = psth_right_df.hvplot.heatmap(
+                x='columns',
+                y='index'
             ).opts(
-                cmap='Plasma',
-                colorbar=True,
-                width=400,
-                height=300,
-                xlabel=xlabel,
-                ylabel='Neurons',
-                title=f'{trial_type} - Right (0°)',
-                invert_yaxis=False,
-                tools=['hover']
+                opts.HeatMap(
+                    cmap='Plasma',
+                    colorbar=True,
+                    width=400,
+                    height=300,
+                    xlabel=xlabel,
+                    ylabel='Neurons',
+                    title=f'{trial_type} - Right (0°)',
+                    invert_yaxis=False,
+                    tools=['hover'],
+                    clabel='Firing Rate',
+                    xlim=(params_r['epok'][0], params_r['epok'][1])
+                )
             )
             
-            plots.extend([img_left, img_right])
+            plots.extend([heatmap_left, heatmap_right])
         
         # Create 3×2 layout (3 rows, 2 columns)
         return hv.Layout(plots).cols(2)
@@ -723,26 +957,35 @@ class Session:
                 
                 params = data['params']
                 
-                # Create heatmap
-                img = hv.Image(
+                # Create DataFrame for heatmap
+                psth_df = pd.DataFrame(
                     reordered_matrix,
-                    kdims=['Time', 'Neurons'],
-                    vdims='Firing Rate',
-                    bounds=(params['epok'][0], 0, params['epok'][1], n_cells)
-                ).opts(
-                    cmap='Plasma',
-                    colorbar=True,
-                    width=400,
-                    height=250,
-                    xlabel='Time from stop_cue (ms)',
-                    ylabel='Neurons',
-                    title=f'{trial_type} SSD {int(ssd)} - {dir_label} ({direction}°)',
-                    invert_yaxis=False,
-                    tools=['hover'],
-                    fontsize={'title': 10, 'labels': 9, 'ticks': 8}
+                    columns=data['bin_centers'],
+                    index=range(n_cells)
                 )
                 
-                plots.append(img)
+                # Create heatmap
+                heatmap = psth_df.hvplot.heatmap(
+                    x='columns',
+                    y='index'
+                ).opts(
+                    opts.HeatMap(
+                        cmap='Plasma',
+                        colorbar=True,
+                        width=400,
+                        height=250,
+                        xlabel='Time from stop_cue (ms)',
+                        ylabel='Neurons',
+                        title=f'{trial_type} SSD {int(ssd)} - {dir_label} ({direction}°)',
+                        invert_yaxis=False,
+                        tools=['hover'],
+                        fontsize={'title': 10, 'labels': 9, 'ticks': 8},
+                        clabel='Firing Rate',
+                        xlim=(params['epok'][0], params['epok'][1])
+                    )
+                )
+                
+                plots.append(heatmap)
         
         # Create layout with 2 columns (Left, Right)
         return hv.Layout(plots).cols(2)
