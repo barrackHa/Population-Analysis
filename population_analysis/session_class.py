@@ -2,11 +2,12 @@ import pandas as pd
 import numpy as np
 import holoviews as hv
 from scipy.ndimage import gaussian_filter1d
+from cell_analysis import Cell
 
 
 class Session:
     """
-    Class representing a single recording session with multiple MSN cells.
+    Class representing a single recording session with multiple cells.
     Handles population-level analysis within a session.
     Data generation methods are separated from plotting methods.
     """
@@ -19,51 +20,27 @@ class Session:
         -----------
         session_df : pd.DataFrame
             DataFrame containing all cell-trial data for a single session
+            Its columns are: 'cell_ID', 'cell_type', 'maestro_ID', 'problem', 
+            'grade', 'filename', 'trial_name', 'reaction_time', 'go_cue', 
+            'stop_cue', 'trial_failed', 'ssd_len', 'ssd_number', 'type', 
+            'first_relevant_saccade', 'segs_durations', 'segs_times', 
+            'trial_length', 'screen_rotation', 'saccades', 'blinks', 'dir', 
+            'neural_data', 'session', 'plexon_session', 'trial_number', 'trial_session'
         """
+        assert session_df['trial_session'].unique().size == 1, "DataFrame must contain only one session"
         self.data = session_df.copy()
         self.session_id = session_df.iloc[0]['trial_session']
         self.cell_ids = sorted(self.data['cell_ID'].unique())
         self.n_cells = len(self.cell_ids)
+        self.trial_ids = sorted(self.data['trial_number'].unique())
+        self.n_trials = len(self.trial_ids)
         
         if verbose:
             print(f"Session {self.session_id} initialized:")
             print(f"  - Number of cells: {self.n_cells}")
-            print(f"  - Total trials: {len(self.data)}")
+            print(f"  - Total trials: {self.n_trials}")
             print(f"  - Trial types: {sorted(self.data['type'].unique())}")
             print(f"  - Directions: {sorted(self.data['dir'].unique())}")
-    
-    def align_spikes_to_event(self, alignment_point='go_cue'):
-        """
-        Align spike times to a specific event for all cells in the session.
-        
-        Parameters:
-        -----------
-        alignment_point : str
-            Event to align to: 'go_cue', 'stop_cue', or 'first_relevant_saccade'
-        """
-        def get_alignment_time(row):
-            if alignment_point == 'go_cue':
-                return row['go_cue']
-            elif alignment_point == 'stop_cue':
-                return row['stop_cue'] if not pd.isna(row['stop_cue']) else row['go_cue']
-            elif alignment_point == 'first_relevant_saccade':
-                saccade = row['first_relevant_saccade']
-                if isinstance(saccade, (list, np.ndarray)) and len(saccade) > 0:
-                    return saccade[0]
-                return np.nan
-            else:
-                return alignment_point
-        
-        def align_spikes(row):
-            t_0 = get_alignment_time(row)
-            if pd.isna(t_0):
-                return np.array([])
-            spikes = np.array(row['neural_data'], dtype=float)
-            return spikes - t_0
-        
-        col_name = f'spikes_aligned_to_{alignment_point}'
-        self.data[col_name] = self.data.apply(align_spikes, axis=1)
-        return col_name
     
     def get_cell_psth(self, cell_id, epok=[-500, 1000], bin_size=10,
                       alignment_point='go_cue', trial_type=None, direction=None,
@@ -96,47 +73,32 @@ class Session:
         --------
         tuple : (bin_centers, firing_rate, n_trials)
         """
-        # Get alignment column
-        col_name = f'spikes_aligned_to_{alignment_point}'
-        if col_name not in self.data.columns:
-            self.align_spikes_to_event(alignment_point)
-        
-        # Filter data for this cell and conditions
-        cell_data = self.data[self.data['cell_ID'] == cell_id].copy()
-        
-        if trial_type is not None:
-            cell_data = cell_data[cell_data['type'] == trial_type]
-        
-        if direction is not None:
-            cell_data = cell_data[cell_data['dir'] == direction]
-        
-        if ssd_number is not None:
-            cell_data = cell_data[cell_data['ssd_number'] == ssd_number]
-        
-        if success_only:
-            cell_data = cell_data[cell_data['trial_failed'] == False]
+        # Get data for this specific cell
+        # Note: No need to copy here since Cell.__init__ will make its own defensive copy
+        cell_data = self.data[self.data['cell_ID'] == cell_id]
         
         if len(cell_data) == 0:
             return None, None, 0
         
-        # Create bins
-        bins = np.arange(epok[0], epok[1] + bin_size, bin_size)
-        bin_centers = bins[:-1] + bin_size / 2
+        # Create a Cell instance for this cell (Cell.__init__ will copy the data)
+        cell = Cell(cell_data)
         
-        # Count spikes in each bin
-        spike_counts = np.zeros(len(bins) - 1)
-        for _, row in cell_data.iterrows():
-            spikes = row[col_name]
-            counts, _ = np.histogram(spikes, bins=bins)
-            spike_counts += counts
-        
-        # Convert to firing rate (spikes/sec)
-        n_trials = len(cell_data)
-        firing_rate = (spike_counts / n_trials) / (bin_size / 1000)
-        
-        # Apply Gaussian smoothing if requested
-        if smooth:
-            firing_rate = gaussian_filter1d(firing_rate, sigma=bin_size, truncate=2)
+        # Use Cell's calculate_psth method
+        # Note: Cell uses smooth_ker_size parameter for Gaussian smoothing kernel size
+        # Session class uses bin_size for both binning and smoothing (sigma=bin_size)
+        bin_centers, firing_rate, n_trials = cell.calculate_psth(
+            epok=epok,
+            bin_size=bin_size,
+            alignment_point=alignment_point,
+            trial_type=trial_type,
+            direction=direction,
+            ssd_number=ssd_number,
+            success_only=success_only,
+            smooth=smooth,
+            smooth_ker_size=bin_size,  # Match Session's original behavior: sigma=bin_size
+            delta=False,
+            normalize_bins=False
+        )
         
         return bin_centers, firing_rate, n_trials
     
@@ -218,7 +180,7 @@ class Session:
         --------
         dict : Dictionary with keys:
             - 'bin_centers': time bins
-            - 'psth_matrix': 2D array (n_cells × n_bins), sorted if requested
+            - 'psth_matrix': 2D array (n_cells X n_bins), sorted if requested
             - 'cell_ids': list of cell IDs in the order shown
             - 'sort_idx': sorting indices used (if sort_by_peak=True)
             - 'params': dict of parameters used
