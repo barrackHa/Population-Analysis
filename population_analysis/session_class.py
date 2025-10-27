@@ -516,19 +516,19 @@ class Session:
         psth_matrix = data['psth_matrix']
         bin_centers = data['bin_centers']
         params = data['params']
+        cell_ids = data['cell_ids']
         
-        # Create DataFrame for heatmap
+        # Create DataFrame for heatmap with named axes
         psth_df = pd.DataFrame(
             psth_matrix,
             columns=bin_centers,
-            index=range(psth_matrix.shape[0])
+            index=cell_ids
         )
+        psth_df.columns.name = 'Time (ms)'
+        psth_df.index.name = 'Cell ID'
         
-        # Create heatmap
-        heatmap = psth_df.hvplot.heatmap(
-            x='columns',
-            y='index'
-        ).opts(
+        # Create heatmap - hvplot will automatically use the axis names
+        heatmap = psth_df.hvplot.heatmap().opts(
             opts.HeatMap(
                 cmap='Plasma',
                 colorbar=True,
@@ -602,18 +602,17 @@ class Session:
             spike_counts_matrix = spike_counts_matrix[sort_idx]
             cells_used = [cells_used[i] for i in sort_idx]
         
-        # Create DataFrame for heatmap
+        # Create DataFrame for heatmap with named axes
         spike_counts_df = pd.DataFrame(
             spike_counts_matrix,
             columns=bin_centers,
-            index=range(spike_counts_matrix.shape[0])
+            index=cells_used
         )
+        spike_counts_df.columns.name = 'Time (ms)'
+        spike_counts_df.index.name = 'Cell ID'
         
-        # Create heatmap
-        heatmap = spike_counts_df.hvplot.heatmap(
-            x='columns',
-            y='index'
-        ).opts(
+        # Create heatmap - hvplot will automatically use the axis names
+        heatmap = spike_counts_df.hvplot.heatmap().opts(
             opts.HeatMap(
                 cmap='Plasma',
                 colorbar=True,
@@ -658,27 +657,29 @@ class Session:
         data_left = data['left']
         data_right = data['right']
         params_left = data_left['params']
+        cell_ids = data_left['cell_ids']
         
-        # Create DataFrames for heatmaps
+        # Create DataFrames for heatmaps with named axes
         n_cells = data_left['psth_matrix'].shape[0]
         
         psth_left_df = pd.DataFrame(
             data_left['psth_matrix'],
             columns=data_left['bin_centers'],
-            index=range(n_cells)
+            index=cell_ids
         )
+        psth_left_df.columns.name = 'Time (ms)'
+        psth_left_df.index.name = 'Cell ID'
         
         psth_right_df = pd.DataFrame(
             data_right['psth_matrix'],
             columns=data_right['bin_centers'],
-            index=range(n_cells)
+            index=cell_ids
         )
+        psth_right_df.columns.name = 'Time (ms)'
+        psth_right_df.index.name = 'Cell ID'
         
-        # Create heatmaps
-        heatmap_left = psth_left_df.hvplot.heatmap(
-            x='columns',
-            y='index'
-        ).opts(
+        # Create heatmaps - hvplot will automatically use the axis names
+        heatmap_left = psth_left_df.hvplot.heatmap().opts(
             opts.HeatMap(
                 cmap='Plasma',
                 colorbar=True,
@@ -694,10 +695,7 @@ class Session:
             )
         )
         
-        heatmap_right = psth_right_df.hvplot.heatmap(
-            x='columns',
-            y='index'
-        ).opts(
+        heatmap_right = psth_right_df.hvplot.heatmap().opts(
             opts.HeatMap(
                 cmap='Plasma',
                 colorbar=True,
@@ -793,6 +791,7 @@ class Session:
             
             params_l = data_l['params']
             params_r = data_r['params']
+            cell_ids = data_l['cell_ids']
             
             # Determine alignment and xlabel
             if trial_type == 'GO':
@@ -802,24 +801,25 @@ class Session:
                 alignment = 'stop_cue'
                 xlabel = 'Time from stop_cue (ms)'
             
-            # Create DataFrames for heatmaps
+            # Create DataFrames for heatmaps with named axes
             psth_left_df = pd.DataFrame(
                 data_l['psth_matrix'],
                 columns=data_l['bin_centers'],
-                index=range(n_cells)
+                index=cell_ids
             )
+            psth_left_df.columns.name = 'Time (ms)'
+            psth_left_df.index.name = 'Cell ID'
             
             psth_right_df = pd.DataFrame(
                 data_r['psth_matrix'],
                 columns=data_r['bin_centers'],
-                index=range(n_cells)
+                index=cell_ids
             )
+            psth_right_df.columns.name = 'Time (ms)'
+            psth_right_df.index.name = 'Cell ID'
             
-            # Left direction heatmap
-            heatmap_left = psth_left_df.hvplot.heatmap(
-                x='columns',
-                y='index'
-            ).opts(
+            # Left direction heatmap - hvplot will automatically use the axis names
+            heatmap_left = psth_left_df.hvplot.heatmap().opts(
                 opts.HeatMap(
                     cmap='Plasma',
                     colorbar=True,
@@ -835,11 +835,8 @@ class Session:
                 )
             )
             
-            # Right direction heatmap
-            heatmap_right = psth_right_df.hvplot.heatmap(
-                x='columns',
-                y='index'
-            ).opts(
+            # Right direction heatmap - hvplot will automatically use the axis names
+            heatmap_right = psth_right_df.hvplot.heatmap().opts(
                 opts.HeatMap(
                     cmap='Plasma',
                     colorbar=True,
@@ -957,18 +954,17 @@ class Session:
                 
                 params = data['params']
                 
-                # Create DataFrame for heatmap
+                # Create DataFrame for heatmap with named axes
                 psth_df = pd.DataFrame(
                     reordered_matrix,
                     columns=data['bin_centers'],
-                    index=range(n_cells)
+                    index=cell_order
                 )
+                psth_df.columns.name = 'Time (ms)'
+                psth_df.index.name = 'Cell ID'
                 
-                # Create heatmap
-                heatmap = psth_df.hvplot.heatmap(
-                    x='columns',
-                    y='index'
-                ).opts(
+                # Create heatmap - hvplot will automatically use the axis names
+                heatmap = psth_df.hvplot.heatmap().opts(
                     opts.HeatMap(
                         cmap='Plasma',
                         colorbar=True,
