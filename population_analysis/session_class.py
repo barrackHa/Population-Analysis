@@ -43,6 +43,33 @@ class Session:
             print(f"  - Trial types: {sorted(self.data['type'].unique())}")
             print(f"  - Directions: {sorted(self.data['dir'].unique())}")
     
+    def get_cells_with_no_spikes(self, as_percentage=False):
+        """
+        Get the number or percentage of cells that have no spikes across all trials.
+        Uses fully vectorized operations for efficiency.
+        
+        Parameters:
+        -----------
+        as_percentage : bool
+            If True, return percentage instead of count (default: False)
+        
+        Returns:
+        --------
+        int or float : Number or percentage of cells with zero spikes in all trials
+        """
+        # Group by cell_ID and check if all neural_data entries are empty lists
+        # For each cell, get unique values in neural_data and check if only [[]] exists
+        cells_with_no_spikes = (
+            self.data.groupby('cell_ID')['neural_data']
+            .apply(lambda x: x.value_counts().index.tolist() == [[]])
+            .sum()
+        )
+        
+        if as_percentage:
+            return (cells_with_no_spikes / self.n_cells) * 100 if self.n_cells > 0 else 0.0
+        
+        return int(cells_with_no_spikes)
+    
     def get_cell_psth(self, cell_id, epok=[-500, 1000], bin_size=10,
                       alignment_point='go_cue', trial_type=None, direction=None,
                       ssd_number=None, success_only=True, smooth=True):
@@ -268,6 +295,86 @@ class Session:
         return bin_centers, spike_counts_matrix, cells_used
     
     # ==================== DATA GENERATION METHODS ====================
+    
+    def get_population_spike_counts_data(self, epok=[-500, 1000], bin_size=1,
+                                         alignment_point='go_cue', trial_type=None,
+                                         direction=None, ssd_number=None,
+                                         success_only=True, normalize=True,
+                                         sort_by_peak=True):
+        """
+        Get spike counts data for all cells in the session.
+        DATA GENERATION METHOD - separated from plotting.
+        
+        Parameters:
+        -----------
+        epok : list
+            Time window [start, end] in ms
+        bin_size : int
+            Bin size in ms (default: 1)
+        alignment_point : str
+            Event to align to
+        trial_type : str, optional
+            'GO', 'STOP', or 'CONT'
+        direction : int, optional
+            0 (right) or 180 (left)
+        ssd_number : int, optional
+            SSD number (1-4)
+        success_only : bool
+            Include only successful trials
+        normalize : bool
+            If True, z-score normalize spike counts per cell
+        sort_by_peak : bool
+            Sort cells by time of peak activity
+        
+        Returns:
+        --------
+        dict : Dictionary with keys:
+            - 'bin_centers': time bins
+            - 'spike_counts_matrix': 2D array (n_cells × n_bins), sorted if requested
+            - 'cell_ids': list of cell IDs in the order shown
+            - 'sort_idx': sorting indices used (if sort_by_peak=True)
+            - 'params': dict of parameters used
+        """
+        # Get spike counts for all cells
+        bin_centers, spike_counts_matrix, cells_used = self.get_all_cells_spike_counts(
+            epok=epok,
+            bin_size=bin_size,
+            alignment_point=alignment_point,
+            trial_type=trial_type,
+            direction=direction,
+            ssd_number=ssd_number,
+            success_only=success_only,
+            normalize=normalize
+        )
+        
+        if spike_counts_matrix is None:
+            return None
+        
+        # Sort by peak time if requested
+        sort_idx = None
+        if sort_by_peak:
+            peak_times = np.argmax(spike_counts_matrix, axis=1)
+            sort_idx = np.argsort(peak_times)
+            spike_counts_matrix = spike_counts_matrix[sort_idx]
+            cells_used = [cells_used[i] for i in sort_idx]
+        
+        return {
+            'bin_centers': bin_centers,
+            'spike_counts_matrix': spike_counts_matrix,
+            'cell_ids': cells_used,
+            'sort_idx': sort_idx,
+            'params': {
+                'epok': epok,
+                'bin_size': bin_size,
+                'alignment_point': alignment_point,
+                'trial_type': trial_type,
+                'direction': direction,
+                'ssd_number': ssd_number,
+                'success_only': success_only,
+                'normalize': normalize,
+                'sort_by_peak': sort_by_peak
+            }
+        }
     
     def get_population_data_single_condition(self, epok=[-500, 1000], bin_size=10,
                                              alignment_point='go_cue', trial_type=None, 
@@ -546,85 +653,62 @@ class Session:
         
         return heatmap
     
-    def plot_population_spike_counts_heatmap(self, epok=[-500, 1000], bin_size=1,
-                                             alignment_point='go_cue', trial_type=None,
-                                             direction=None, ssd_number=None,
-                                             success_only=True, normalize=True,
-                                             sort_by_peak=True):
+    def plot_population_spike_counts_heatmap(self, data=None, **kwargs):
         """
         Plot a heatmap of all cells' spike counts in the session.
+        Can use pre-generated data or generate new data.
         
         Parameters:
         -----------
-        epok : list
-            Time window [start, end] in ms
-        bin_size : int
-            Bin size in ms (default: 1)
-        alignment_point : str
-            Event to align to
-        trial_type : str, optional
-            'GO', 'STOP', or 'CONT'
-        direction : int, optional
-            0 (right) or 180 (left)
-        ssd_number : int, optional
-            SSD number (1-4)
-        success_only : bool
-            Include only successful trials
-        normalize : bool
-            If True, normalize all spike counts by global maximum
-        sort_by_peak : bool
-            Sort cells by time of peak activity
+        data : dict, optional
+            Pre-generated data from get_population_spike_counts_data()
+            If None, will generate data using **kwargs
+        **kwargs : dict
+            Parameters for get_population_spike_counts_data() if data is None
         
         Returns:
         --------
-        hv.Image : Heatmap plot
+        hv.HeatMap : Heatmap plot
         """
-        # Get spike counts for all cells
-        bin_centers, spike_counts_matrix, cells_used = self.get_all_cells_spike_counts(
-            epok=epok,
-            bin_size=bin_size,
-            alignment_point=alignment_point,
-            trial_type=trial_type,
-            direction=direction,
-            ssd_number=ssd_number,
-            success_only=success_only,
-            normalize=normalize  # Pass normalization to the data method
-        )
+        # Generate data if not provided
+        if data is None:
+            data = self.get_population_spike_counts_data(**kwargs)
         
-        if spike_counts_matrix is None:
+        if data is None:
             print("No data found for specified conditions")
             return None
         
-        # Sort by peak time if requested
-        if sort_by_peak:
-            peak_times = np.argmax(spike_counts_matrix, axis=1)
-            sort_idx = np.argsort(peak_times)
-            spike_counts_matrix = spike_counts_matrix[sort_idx]
-            cells_used = [cells_used[i] for i in sort_idx]
+        spike_counts_matrix = data['spike_counts_matrix']
+        bin_centers = data['bin_centers']
+        params = data['params']
+        cell_ids = data['cell_ids']
         
         # Create DataFrame for heatmap with named axes
         spike_counts_df = pd.DataFrame(
             spike_counts_matrix,
             columns=bin_centers,
-            index=cells_used
+            index=cell_ids
         )
         spike_counts_df.columns.name = 'Time (ms)'
         spike_counts_df.index.name = 'Cell ID'
         
         # Create heatmap - hvplot will automatically use the axis names
-        heatmap = spike_counts_df.hvplot.heatmap().opts(
+        heatmap = spike_counts_df.hvplot.heatmap(
+            xmarks_muted=True,
+            xmarks_visible=False
+        ).opts(
             opts.HeatMap(
                 cmap='Plasma',
                 colorbar=True,
                 width=800,
                 height=600,
-                xlabel=f'Time from {alignment_point} (ms)',
+                xlabel=f'Time from {params["alignment_point"]} (ms)',
                 ylabel='Neurons',
-                title=f'Session {self.session_id} - Spike Counts (bin={bin_size}ms)\n{trial_type or "All"} trials - Dir {direction if direction is not None else "Both"}',
+                title=f'Session {self.session_id} - Spike Counts (bin={params["bin_size"]}ms)\n{params["trial_type"] or "All"} trials - Dir {params["direction"] if params["direction"] is not None else "Both"}',
                 invert_yaxis=False,
                 tools=['hover'],
-                clabel='Spike Count' if not normalize else 'Normalized Spike Count',
-                xlim=(epok[0], epok[1])
+                clabel='Spike Count' if not params['normalize'] else 'Normalized Spike Count',
+                xlim=(params['epok'][0], params['epok'][1])
             )
         )
         
@@ -860,7 +944,7 @@ class Session:
     def plot_trial_type_by_ssd(self, trial_type='STOP', ssd_numbers=None, **kwargs):
         """
         Plot STOP or CONT trials separated by SSD number, for both left and right directions.
-        Creates a 4×2 grid with:
+        Creates a 42 grid with:
         - Rows: SSD numbers (SSD1, SSD2, SSD3, SSD4)
         - Columns: Left (180°) and Right (0°) directions
         
