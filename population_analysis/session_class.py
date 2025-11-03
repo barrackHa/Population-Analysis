@@ -70,7 +70,7 @@ class Session:
         
         return int(cells_with_no_spikes)
     
-    def get_cell_psth(self, cell_id, epok=[-500, 1000], bin_size=10,
+    def get_cell_psth(self, cell_id, epok=[-500, 1000], bin_size=1,
                       alignment_point='go_cue', trial_type=None, direction=None,
                       ssd_number=None, success_only=True, smooth=True, delta=False,
                       smooth_ker_size=25, normalize_bins=False):
@@ -137,10 +137,10 @@ class Session:
         
         return bin_centers, firing_rate, n_trials
     
-    def get_all_cells_psth(self, epok=[-500, 1000], bin_size=10,
+    def get_all_cells_psth(self, epok=[-500, 1000], bin_size=1,
                            alignment_point='go_cue', trial_type=None, direction=None,
                            ssd_number=None, success_only=True, smooth=True, delta=False,
-                           smooth_ker_size=25, normalize_bins=False, normalize=True):
+                           smooth_ker_size=25, normalize_bins=False, normalize=False):
         """
         Get PSTH for all cells in the session.
         
@@ -386,11 +386,12 @@ class Session:
             }
         }
     
-    def get_population_PSTH_single_condition(self, epok=[-500, 1000], bin_size=10,
+    def get_population_PSTH_single_condition(self, epok=[-500, 1000], bin_size=1,
                                              alignment_point='go_cue', trial_type=None, 
                                              direction=None, ssd_number=None, 
-                                             success_only=True, smooth=True,
-                                             normalize=True, sort_by_peak=True):
+                                             success_only=True, smooth=True, delta=False,
+                                             smooth_ker_size=25, normalize_bins=False,
+                                             normalize=False, sort_by_peak=True):
         """
         Get population PSTH data for a single condition.
         DATA GENERATION METHOD - separated from plotting.
@@ -419,6 +420,9 @@ class Session:
             ssd_number=ssd_number,
             success_only=success_only,
             smooth=smooth,
+            smooth_ker_size=smooth_ker_size,
+            delta=delta,
+            normalize_bins=normalize_bins,
             normalize=normalize
         )
         
@@ -452,7 +456,7 @@ class Session:
             }
         }
     
-    def get_population_PSTHs_left_right(self, epok=[-500, 1000], bin_size=10,
+    def get_population_PSTHs_left_right(self, epok=[-500, 1000], bin_size=1,
                                        alignment_point='go_cue', trial_type=None,
                                        ssd_number=None, success_only=True, smooth=True,
                                        normalize=True):
@@ -472,8 +476,8 @@ class Session:
         data_left = self.get_population_PSTH_single_condition(
             epok=epok, bin_size=bin_size, alignment_point=alignment_point,
             trial_type=trial_type, direction=180, ssd_number=ssd_number,
-            success_only=success_only, smooth=smooth, normalize=normalize,
-            sort_by_peak=True
+            success_only=success_only, smooth=smooth, delta=False,
+            smooth_ker_size=25, normalize=normalize, sort_by_peak=True
         )
         
         if data_left is None:
@@ -486,8 +490,8 @@ class Session:
         data_right_unsorted = self.get_population_PSTH_single_condition(
             epok=epok, bin_size=bin_size, alignment_point=alignment_point,
             trial_type=trial_type, direction=0, ssd_number=ssd_number,
-            success_only=success_only, smooth=smooth, normalize=normalize,
-            sort_by_peak=False
+            success_only=success_only, smooth=smooth, delta=False,
+            smooth_ker_size=25, normalize=normalize, sort_by_peak=True
         )
         
         if data_right_unsorted is None:
@@ -515,7 +519,7 @@ class Session:
         }
     
     def get_population_PSTHs_trial_types(self, epok_go=[-500, 1000], epok_stop=[-500, 1000],
-                                        bin_size=10, direction=None,
+                                        bin_size=1, direction=None,
                                         ssd_number=None, success_only=True, smooth=True,
                                         normalize=True):
         """
@@ -538,10 +542,10 @@ class Session:
         data_go = self.get_population_PSTH_single_condition(
             epok=epok_go, bin_size=bin_size, alignment_point='go_cue',
             trial_type='GO', direction=direction, ssd_number=None,
-            success_only=success_only, smooth=smooth, normalize=normalize,
-            sort_by_peak=True
+            success_only=success_only, smooth=smooth, delta=False,
+            smooth_ker_size=25, normalize=normalize, sort_by_peak=True
         )
-        
+
         if data_go is None:
             print("No GO trial data")
             return None
@@ -552,16 +556,16 @@ class Session:
         data_stop_unsorted = self.get_population_PSTH_single_condition(
             epok=epok_stop, bin_size=bin_size, alignment_point='stop_cue',
             trial_type='STOP', direction=direction, ssd_number=ssd_number,
-            success_only=success_only, smooth=smooth, normalize=normalize,
-            sort_by_peak=False
+            success_only=success_only, smooth=smooth, delta=False,
+            smooth_ker_size=25, normalize=normalize, sort_by_peak=True
         )
         
         # Get CONT trials (aligned to stop_cue, unsorted)
         data_cont_unsorted = self.get_population_PSTH_single_condition(
             epok=epok_stop, bin_size=bin_size, alignment_point='stop_cue',
             trial_type='CONT', direction=direction, ssd_number=ssd_number,
-            success_only=success_only, smooth=smooth, normalize=normalize,
-            sort_by_peak=False
+            success_only=success_only, smooth=smooth, delta=False,
+            smooth_ker_size=25, normalize=normalize, sort_by_peak=True
         )
         
         # Reorder STOP to match GO's cell order
@@ -999,8 +1003,8 @@ class Session:
         data_go = self.get_population_PSTH_single_condition(
             epok=epok_go, bin_size=bin_size, alignment_point='go_cue',
             trial_type='GO', direction=180, ssd_number=None,
-            success_only=success_only, smooth=smooth, normalize=normalize,
-            sort_by_peak=True
+            success_only=success_only, smooth=smooth, delta=False,
+            smooth_ker_size=25, normalize=normalize, sort_by_peak=True
         )
         
         if data_go is None:
@@ -1023,8 +1027,8 @@ class Session:
                 data = self.get_population_PSTH_single_condition(
                     epok=epok_stop, bin_size=bin_size, alignment_point='stop_cue',
                     trial_type=trial_type, direction=direction, ssd_number=ssd,
-                    success_only=success_only, smooth=smooth, normalize=normalize,
-                    sort_by_peak=False
+                    success_only=success_only, smooth=smooth, delta=False,
+                    smooth_ker_size=25, normalize=normalize, sort_by_peak=True  
                 )
                 
                 if data is None or len(data['cell_ids']) == 0:
