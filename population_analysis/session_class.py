@@ -459,7 +459,9 @@ class Session:
     def get_population_PSTHs_left_right(self, epok=[-500, 1000], bin_size=1,
                                        alignment_point='go_cue', trial_type=None,
                                        ssd_number=None, success_only=True, smooth=True,
-                                       normalize=True):
+                                       delta=False, smooth_ker_size=25, 
+                                       normalize_bins=False, normalize=False, 
+                                       sort_by_peak=True):
         """
         Get population data for left vs right comparison.
         DATA GENERATION METHOD - separated from plotting.
@@ -476,8 +478,9 @@ class Session:
         data_left = self.get_population_PSTH_single_condition(
             epok=epok, bin_size=bin_size, alignment_point=alignment_point,
             trial_type=trial_type, direction=180, ssd_number=ssd_number,
-            success_only=success_only, smooth=smooth, delta=False,
-            smooth_ker_size=25, normalize=normalize, sort_by_peak=True
+            success_only=success_only, smooth=smooth, delta=delta,
+            smooth_ker_size=smooth_ker_size, normalize_bins=normalize_bins,
+            normalize=normalize, sort_by_peak=sort_by_peak
         )
         
         if data_left is None:
@@ -490,8 +493,9 @@ class Session:
         data_right_unsorted = self.get_population_PSTH_single_condition(
             epok=epok, bin_size=bin_size, alignment_point=alignment_point,
             trial_type=trial_type, direction=0, ssd_number=ssd_number,
-            success_only=success_only, smooth=smooth, delta=False,
-            smooth_ker_size=25, normalize=normalize, sort_by_peak=True
+            success_only=success_only, smooth=smooth, delta=delta,
+            smooth_ker_size=smooth_ker_size, normalize_bins=normalize_bins,
+            normalize=normalize, sort_by_peak=False
         )
         
         if data_right_unsorted is None:
@@ -638,12 +642,15 @@ class Session:
         bin_centers = data['bin_centers']
         params = data['params']
         cell_ids = data['cell_ids']
+        sort_idx = data.get('sort_idx', cell_ids)
+        print(f'sort_idx: {sort_idx}')
+        print(f'cell_ids: {cell_ids}')
         
         # Create DataFrame for heatmap with named axes
         psth_df = pd.DataFrame(
             psth_matrix,
             columns=bin_centers,
-            index=cell_ids
+            # index=sort_idx if sort_idx is not None else cell_ids
         )
         psth_df.columns.name = 'Time (ms)'
         psth_df.index.name = 'Cell ID'
@@ -701,7 +708,7 @@ class Session:
         spike_counts_df = pd.DataFrame(
             spike_counts_matrix,
             columns=bin_centers,
-            index=cell_ids
+            # index=cell_ids
         )
         spike_counts_df.columns.name = 'Time (ms)'
         spike_counts_df.index.name = 'Cell ID'
@@ -725,7 +732,7 @@ class Session:
                 xlim=(params['epok'][0], params['epok'][1])
             )
         )
-        
+
         return heatmap
     
     def plot_left_right_PSTH_comparison(self, data=None, **kwargs):
