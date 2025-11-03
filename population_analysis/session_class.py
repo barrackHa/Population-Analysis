@@ -72,7 +72,8 @@ class Session:
     
     def get_cell_psth(self, cell_id, epok=[-500, 1000], bin_size=10,
                       alignment_point='go_cue', trial_type=None, direction=None,
-                      ssd_number=None, success_only=True, smooth=True):
+                      ssd_number=None, success_only=True, smooth=True, delta=False,
+                      smooth_ker_size=25, normalize_bins=False):
         """
         Calculate PSTH for a specific cell.
         
@@ -96,6 +97,12 @@ class Session:
             Include only successful trials
         smooth : bool
             Apply Gaussian smoothing
+        smooth_ker_size : int
+            Kernel size for Gaussian smoothing (default: 25)
+        delta: bool
+            if True look center to the mean firing rate
+        normalize_bins : bool
+            If True, z-score spike counts before calculating firing rate (default: False)
             
         Returns:
         --------
@@ -123,17 +130,17 @@ class Session:
             ssd_number=ssd_number,
             success_only=success_only,
             smooth=smooth,
-            smooth_ker_size=bin_size,  # Match Session's original behavior: sigma=bin_size
-            delta=False,
-            normalize_bins=False
+            smooth_ker_size=smooth_ker_size,  # Match Session's original behavior: sigma=bin_size
+            delta=delta,
+            normalize_bins=normalize_bins
         )
         
         return bin_centers, firing_rate, n_trials
     
     def get_all_cells_psth(self, epok=[-500, 1000], bin_size=10,
                            alignment_point='go_cue', trial_type=None, direction=None,
-                           ssd_number=None, success_only=True, smooth=True,
-                           normalize=True):
+                           ssd_number=None, success_only=True, smooth=True, delta=False,
+                           smooth_ker_size=25, normalize_bins=False, normalize=True):
         """
         Get PSTH for all cells in the session.
         
@@ -147,7 +154,7 @@ class Session:
         --------
         tuple : (bin_centers, psth_matrix, cell_ids_used)
             - bin_centers: time bins
-            - psth_matrix: 2D array (n_cells × n_bins)
+            - psth_matrix: 2D array (n_cells X n_bins)
             - cell_ids_used: list of cell IDs with data
         """
         psth_list = []
@@ -165,7 +172,10 @@ class Session:
                 direction=direction,
                 ssd_number=ssd_number,
                 success_only=success_only,
-                smooth=smooth
+                smooth=smooth,
+                smooth_ker_size=smooth_ker_size, 
+                delta=delta,
+                normalize_bins=normalize_bins
             )
             
             if bins is not None and n_trials > 0:
@@ -330,7 +340,7 @@ class Session:
         --------
         dict : Dictionary with keys:
             - 'bin_centers': time bins
-            - 'spike_counts_matrix': 2D array (n_cells × n_bins), sorted if requested
+            - 'spike_counts_matrix': 2D array (n_cells X n_bins), sorted if requested
             - 'cell_ids': list of cell IDs in the order shown
             - 'sort_idx': sorting indices used (if sort_by_peak=True)
             - 'params': dict of parameters used
@@ -376,7 +386,7 @@ class Session:
             }
         }
     
-    def get_population_data_single_condition(self, epok=[-500, 1000], bin_size=10,
+    def get_population_PSTH_single_condition(self, epok=[-500, 1000], bin_size=10,
                                              alignment_point='go_cue', trial_type=None, 
                                              direction=None, ssd_number=None, 
                                              success_only=True, smooth=True,
@@ -442,7 +452,7 @@ class Session:
             }
         }
     
-    def get_population_data_left_right(self, epok=[-500, 1000], bin_size=10,
+    def get_population_PSTHs_left_right(self, epok=[-500, 1000], bin_size=10,
                                        alignment_point='go_cue', trial_type=None,
                                        ssd_number=None, success_only=True, smooth=True,
                                        normalize=True):
@@ -459,7 +469,7 @@ class Session:
             - 'cell_order': list of cell IDs in display order
         """
         # Get left direction data
-        data_left = self.get_population_data_single_condition(
+        data_left = self.get_population_PSTH_single_condition(
             epok=epok, bin_size=bin_size, alignment_point=alignment_point,
             trial_type=trial_type, direction=180, ssd_number=ssd_number,
             success_only=success_only, smooth=smooth, normalize=normalize,
@@ -473,7 +483,7 @@ class Session:
         cells_sorted = data_left['cell_ids']
         
         # Get right direction data (unsorted)
-        data_right_unsorted = self.get_population_data_single_condition(
+        data_right_unsorted = self.get_population_PSTH_single_condition(
             epok=epok, bin_size=bin_size, alignment_point=alignment_point,
             trial_type=trial_type, direction=0, ssd_number=ssd_number,
             success_only=success_only, smooth=smooth, normalize=normalize,
@@ -504,7 +514,7 @@ class Session:
             'cell_order': cells_sorted
         }
     
-    def get_population_data_trial_types(self, epok_go=[-500, 1000], epok_stop=[-500, 1000],
+    def get_population_PSTHs_trial_types(self, epok_go=[-500, 1000], epok_stop=[-500, 1000],
                                         bin_size=10, direction=None,
                                         ssd_number=None, success_only=True, smooth=True,
                                         normalize=True):
@@ -525,7 +535,7 @@ class Session:
             - 'cell_order': list of cell IDs in display order
         """
         # Get GO trials (aligned to go_cue) and sort by peak
-        data_go = self.get_population_data_single_condition(
+        data_go = self.get_population_PSTH_single_condition(
             epok=epok_go, bin_size=bin_size, alignment_point='go_cue',
             trial_type='GO', direction=direction, ssd_number=None,
             success_only=success_only, smooth=smooth, normalize=normalize,
@@ -539,7 +549,7 @@ class Session:
         cells_sorted = data_go['cell_ids']
         
         # Get STOP trials (aligned to stop_cue, unsorted)
-        data_stop_unsorted = self.get_population_data_single_condition(
+        data_stop_unsorted = self.get_population_PSTH_single_condition(
             epok=epok_stop, bin_size=bin_size, alignment_point='stop_cue',
             trial_type='STOP', direction=direction, ssd_number=ssd_number,
             success_only=success_only, smooth=smooth, normalize=normalize,
@@ -547,7 +557,7 @@ class Session:
         )
         
         # Get CONT trials (aligned to stop_cue, unsorted)
-        data_cont_unsorted = self.get_population_data_single_condition(
+        data_cont_unsorted = self.get_population_PSTH_single_condition(
             epok=epok_stop, bin_size=bin_size, alignment_point='stop_cue',
             trial_type='CONT', direction=direction, ssd_number=ssd_number,
             success_only=success_only, smooth=smooth, normalize=normalize,
@@ -595,7 +605,7 @@ class Session:
     
     # ==================== PLOTTING METHODS ====================
     
-    def plot_population_heatmap(self, data=None, **kwargs):
+    def plot_population_PSTH_heatmap(self, data=None, **kwargs):
         """
         Plot a heatmap of all cells' activity in the session.
         Can use pre-generated data or generate new data.
@@ -603,10 +613,10 @@ class Session:
         Parameters:
         -----------
         data : dict, optional
-            Pre-generated data from get_population_data_single_condition()
+            Pre-generated data from get_population_PSTH_single_condition()
             If None, will generate data using **kwargs
         **kwargs : dict
-            Parameters for get_population_data_single_condition() if data is None
+            Parameters for get_population_PSTH_single_condition() if data is None
         
         Returns:
         --------
@@ -614,7 +624,7 @@ class Session:
         """
         # Generate data if not provided
         if data is None:
-            data = self.get_population_data_single_condition(**kwargs)
+            data = self.get_population_PSTH_single_condition(**kwargs)
         
         if data is None:
             print("No data found for specified conditions")
@@ -714,7 +724,7 @@ class Session:
         
         return heatmap
     
-    def plot_left_right_comparison(self, data=None, **kwargs):
+    def plot_left_right_PSTH_comparison(self, data=None, **kwargs):
         """
         Plot left vs right direction heatmaps with same cell ordering.
         Cells are ordered by left direction peak, right uses same order.
@@ -722,10 +732,10 @@ class Session:
         Parameters:
         -----------
         data : dict, optional
-            Pre-generated data from get_population_data_left_right()
+            Pre-generated data from get_population_PSTHs_left_right()
             If None, will generate data using **kwargs
         **kwargs : dict
-            Parameters for get_population_data_left_right() if data is None
+            Parameters for get_population_PSTHs_left_right() if data is None
         
         Returns:
         --------
@@ -733,7 +743,7 @@ class Session:
         """
         # Generate data if not provided
         if data is None:
-            data = self.get_population_data_left_right(**kwargs)
+            data = self.get_population_PSTHs_left_right(**kwargs)
         
         if data is None:
             return None
@@ -797,9 +807,9 @@ class Session:
         
         return (heatmap_left + heatmap_right).cols(2)
     
-    def plot_trial_type_comparison(self, data_left=None, data_right=None, **kwargs):
+    def plot_trial_type_PSTH_comparison(self, data_left=None, data_right=None, **kwargs):
         """
-        Plot GO, STOP, and CONT trials with appropriate alignments in 3×2 grid.
+        Plot GO, STOP, and CONT trials with appropriate alignments in 3X2 grid.
         - Rows: GO, STOP, CONT trial types
         - Columns: Left (180°), Right (0°) directions
         - GO: aligned to go_cue
@@ -811,27 +821,27 @@ class Session:
         Parameters:
         -----------
         data_left : dict, optional
-            Pre-generated data for left direction from get_population_data_trial_types()
+            Pre-generated data for left direction from get_population_PSTHs_trial_types()
         data_right : dict, optional
-            Pre-generated data for right direction from get_population_data_trial_types()
+            Pre-generated data for right direction from get_population_PSTHs_trial_types()
         **kwargs : dict
-            Parameters for get_population_data_trial_types() if data not provided
+            Parameters for get_population_PSTHs_trial_types() if data not provided
             Note: 'direction' parameter will be ignored as both directions are plotted
         
         Returns:
         --------
-        hv.Layout : 3×2 grid of heatmaps
+        hv.Layout : 3X2 grid of heatmaps
         """
         # Remove direction parameter if provided in kwargs
         kwargs.pop('direction', None)
         
         # Generate left direction data if not provided
         if data_left is None:
-            data_left = self.get_population_data_trial_types(direction=180, **kwargs)
+            data_left = self.get_population_PSTHs_trial_types(direction=180, **kwargs)
         
         # Generate right direction data if not provided  
         if data_right is None:
-            data_right = self.get_population_data_trial_types(direction=0, **kwargs)
+            data_right = self.get_population_PSTHs_trial_types(direction=0, **kwargs)
         
         if data_left is None or data_right is None:
             print("Missing data for one or both directions")
@@ -941,7 +951,7 @@ class Session:
         # Create 3×2 layout (3 rows, 2 columns)
         return hv.Layout(plots).cols(2)
     
-    def plot_trial_type_by_ssd(self, trial_type='STOP', ssd_numbers=None, **kwargs):
+    def plot_trial_type_PSTH_by_ssd(self, trial_type='STOP', ssd_numbers=None, **kwargs):
         """
         Plot STOP or CONT trials separated by SSD number, for both left and right directions.
         Creates a 42 grid with:
@@ -966,7 +976,7 @@ class Session:
         
         Returns:
         --------
-        hv.Layout : 4×2 grid of heatmaps (SSD by direction)
+        hv.Layout : 4X2 grid of heatmaps (SSD by direction)
         """
         # Validate trial_type
         if trial_type not in ['STOP', 'CONT']:
@@ -986,7 +996,7 @@ class Session:
         normalize = kwargs.get('normalize', True)
         
         # Get GO data for cell ordering
-        data_go = self.get_population_data_single_condition(
+        data_go = self.get_population_PSTH_single_condition(
             epok=epok_go, bin_size=bin_size, alignment_point='go_cue',
             trial_type='GO', direction=180, ssd_number=None,
             success_only=success_only, smooth=smooth, normalize=normalize,
@@ -1010,7 +1020,7 @@ class Session:
             # Create left and right plots for this SSD
             for direction, dir_label in [(180, 'Left'), (0, 'Right')]:
                 # Get data for this condition
-                data = self.get_population_data_single_condition(
+                data = self.get_population_PSTH_single_condition(
                     epok=epok_stop, bin_size=bin_size, alignment_point='stop_cue',
                     trial_type=trial_type, direction=direction, ssd_number=ssd,
                     success_only=success_only, smooth=smooth, normalize=normalize,
