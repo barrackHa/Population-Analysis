@@ -397,7 +397,7 @@ class Cell:
         smooth_ker_size : int
             Kernel size for Gaussian smoothing (default: 25)
         delta: bool
-            if True looke center to the mean firing rate
+            if True look center to the mean firing rate
         normalize_bins : bool
             If True, z-score spike counts before calculating firing rate (default: False)
         
