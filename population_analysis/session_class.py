@@ -1,10 +1,11 @@
-from typing import Union
 import pandas as pd
 import numpy as np
 import holoviews as hv
+from typing import Union
 from holoviews import opts
 from scipy.ndimage import gaussian_filter1d
 from cell_analysis import Cell
+from sklearn.model_selection import train_test_split
 
 
 class Session:
@@ -1196,3 +1197,30 @@ class Session:
         
         # Create layout with 2 columns (Left, Right)
         return hv.Layout(plots).cols(2)
+
+    def split_to_train_test(self, test_fraction=0.5, random_state=None) -> tuple['Session', 'Session']:
+        """
+        Split data into training and testing sets.
+        
+        Parameters:
+        -----------
+        data : array-like
+            Data to split
+        test_fraction : float
+            Fraction of data to use for testing
+        random_state : int, optional
+            Random seed for reproducibility
+        
+        Returns:
+        --------
+        train_session : array-like
+            Training data
+        test_data : array-like
+            Testing data
+        """
+
+        train_df, test_df = train_test_split(
+            self.data, test_size=test_fraction, random_state=random_state
+        )
+        
+        return Session(train_df), Session(test_df)
