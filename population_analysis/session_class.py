@@ -1,3 +1,4 @@
+from typing import Union
 import pandas as pd
 import numpy as np
 import holoviews as hv
@@ -35,14 +36,115 @@ class Session:
         self.n_cells = len(self.cell_ids)
         self.trial_ids = sorted(self.data['trial_number'].unique())
         self.n_trials = len(self.trial_ids)
-        
+        self.trial_types = sorted(self.data['type'].unique())
+        self.directions = sorted(self.data['dir'].unique())
+
         if verbose:
             print(f"Session {self.session_id} initialized:")
             print(f"  - Number of cells: {self.n_cells}")
             print(f"  - Total trials: {self.n_trials}")
             print(f"  - Trial types: {sorted(self.data['type'].unique())}")
             print(f"  - Directions: {sorted(self.data['dir'].unique())}")
+
+    def __repr__(self):
+        return (f"Session {self.session_id} | Cells: {self.n_cells} | "
+                f"Trials: {self.n_trials} | Trial Types: {sorted(self.data['type'].unique())} | "
+                f"Directions: {sorted(self.data['dir'].unique())}")
+
+    def drop_cell_from_session(self, cell_id: Union[int, str, Cell]):
+        """
+        Remove all data for a specific cell from the session.
+        
+        Parameters:
+        -----------
+        cell_id : int
+            Cell identifier to remove
+        """
+        if isinstance(cell_id, Cell):
+            cell_id = cell_id.cell_id
+        elif isinstance(cell_id, str):
+            cell_id = int(cell_id)
+        
+        initial_n_cells = self.n_cells
+        self.data = self.data[self.data['cell_ID'] != cell_id]
+        self.cell_ids = sorted(self.data['cell_ID'].unique())
+        self.n_cells = len(self.cell_ids)
+        self.trial_ids = sorted(self.data['trial_number'].unique())
+        self.n_trials = len(self.trial_ids)
+        self.trial_types = sorted(self.data['type'].unique())
+        self.directions = sorted(self.data['dir'].unique())
+
+        if self.n_cells < initial_n_cells:
+            print(f"Cell {cell_id} removed from session {self.session_id}.")
+        else:
+            print(f"Cell {cell_id} not found in session {self.session_id}. No changes made.")
+        
+    def drop_cells_with_missing_trial_type_or_dir_data(self):
+        """
+        Remove cells that do not have data for all trial types or directions.
+        """
+        i = 0
+        for id in self.cell_ids:
+            cell_data = self.data[self.data['cell_ID'] == id]
+            cell = Cell(cell_data, verbose=False)
+            dirs_condition = (
+                (0 not in cell.directions) or 
+                (180 not in cell.directions)
+            )
+            trial_types_condition = (len(cell.trial_types) != 3)
+            if dirs_condition or trial_types_condition:
+                self.drop_cell_from_session(id)
+                i += 1
+        
+        print(f"Dropped {i} cell(s) with incomplete trial type or directional data.")
     
+    def get_cell_data(self, cell_id: Union[int, str, Cell]) -> pd.DataFrame:
+        """
+        Get data for a specific cell in the session.
+        
+        Parameters:
+        -----------
+        cell_id : int
+            Cell identifier
+            
+        Returns:
+        --------
+        pd.DataFrame : DataFrame containing all trials for the specified cell
+        """
+        if isinstance(cell_id, str):
+            cell_id = int(cell_id)
+        elif isinstance(cell_id, Cell):
+            cell_id = cell_id.cell_id
+        
+        cell_data = self.data[self.data['cell_ID'] == cell_id].copy()
+        return cell_data
+    
+    def get_cell(self, cell_id: Union[int, str, Cell], verbose=False) -> Cell:
+        """
+        Get a Cell instance for a specific cell in the session.
+        
+        Parameters:
+        -----------
+        cell_id : int
+            Cell identifier
+            
+        Returns:
+        --------
+        Cell : Cell instance for the specified cell
+        """
+        cell_data = self.get_cell_data(cell_id)
+        cell = Cell(cell_data, verbose=verbose)
+        return cell
+    
+    @property
+    def cells(self):
+        """
+        Generator yielding Cell instances for all cells in the session.
+        Yields: Cell instances
+        """
+        for cell_id in self.cell_ids:
+            yield self.get_cell(cell_id)    
+
     def get_cells_with_no_spikes(self, as_percentage=False):
         """
         Get the number or percentage of cells that have no spikes across all trials.
@@ -73,7 +175,7 @@ class Session:
     def get_cell_psth(self, cell_id, epok=[-500, 1000], bin_size=1,
                       alignment_point='go_cue', trial_type=None, direction=None,
                       ssd_number=None, success_only=True, smooth=True, delta=False,
-                      smooth_ker_size=25, normalize_bins=False):
+                      smooth_ker_size=25, normalize_bins=False, normalize=False):
         """
         Calculate PSTH for a specific cell.
         
@@ -103,6 +205,8 @@ class Session:
             if True look center to the mean firing rate
         normalize_bins : bool
             If True, z-score spike counts before calculating firing rate (default: False)
+        normalize : bool
+            If True, normalize firing rate by cell's baseline firing rate
             
         Returns:
         --------
@@ -134,7 +238,10 @@ class Session:
             delta=delta,
             normalize_bins=normalize_bins
         )
-        
+
+        if normalize and (not np.array_equal(firing_rate, np.zeros_like(firing_rate))):
+            firing_rate = firing_rate / np.abs(firing_rate).max() if firing_rate is not None else firing_rate
+
         return bin_centers, firing_rate, n_trials
     
     def get_all_cells_psth(self, epok=[-500, 1000], bin_size=1,
@@ -148,7 +255,7 @@ class Session:
         -----------
         Same as get_cell_psth, plus:
         normalize : bool
-            If True, normalize all firing rates by the global maximum across all cells
+            If True, normalize all firing rates by each cell's baseline firing rate
             
         Returns:
         --------
@@ -175,7 +282,8 @@ class Session:
                 smooth=smooth,
                 smooth_ker_size=smooth_ker_size, 
                 delta=delta,
-                normalize_bins=normalize_bins
+                normalize_bins=normalize_bins, 
+                normalize=normalize  # No per-cell normalization here
             )
             
             if bins is not None and n_trials > 0:
@@ -188,14 +296,7 @@ class Session:
         if len(psth_list) == 0:
             return None, None, []
         
-        psth_matrix = np.array(psth_list)
-        
-        # Apply global normalization if requested
-        if normalize:
-            global_max = psth_matrix.max()
-            if global_max > 0:
-                psth_matrix = psth_matrix / global_max
-        
+        psth_matrix = np.array(psth_list)      
         return bin_centers, psth_matrix, cells_used
     
     def get_cell_spike_counts(self, cell_id, epok=[-500, 1000], bin_size=1,
@@ -367,6 +468,8 @@ class Session:
             sort_idx = np.argsort(peak_times)
             spike_counts_matrix = spike_counts_matrix[sort_idx]
             cells_used = [cells_used[i] for i in sort_idx]
+
+        sort_idx = cells_used if sort_idx is None else sort_idx
         
         return {
             'bin_centers': bin_centers,
@@ -436,6 +539,8 @@ class Session:
             sort_idx = np.argsort(peak_times)
             psth_matrix = psth_matrix[sort_idx]
             cells_used = [cells_used[i] for i in sort_idx]
+
+        sort_idx = cells_used if sort_idx is None else sort_idx
         
         return {
             'bin_centers': bin_centers,
@@ -643,14 +748,15 @@ class Session:
         params = data['params']
         cell_ids = data['cell_ids']
         sort_idx = data.get('sort_idx', cell_ids)
-        print(f'sort_idx: {sort_idx}')
-        print(f'cell_ids: {cell_ids}')
         
+        if sort_idx is None:
+            sort_idx = cell_ids
+
         # Create DataFrame for heatmap with named axes
         psth_df = pd.DataFrame(
             psth_matrix,
             columns=bin_centers,
-            # index=sort_idx if sort_idx is not None else cell_ids
+            # index=sort_idx # this doesn't work well with hvplot 
         )
         psth_df.columns.name = 'Time (ms)'
         psth_df.index.name = 'Cell ID'
@@ -658,7 +764,7 @@ class Session:
         # Create heatmap - hvplot will automatically use the axis names
         heatmap = psth_df.hvplot.heatmap().opts(
             opts.HeatMap(
-                cmap='Plasma',
+                cmap='Viridis',
                 colorbar=True,
                 width=800,
                 height=600,
@@ -770,7 +876,7 @@ class Session:
         psth_left_df = pd.DataFrame(
             data_left['psth_matrix'],
             columns=data_left['bin_centers'],
-            index=cell_ids
+            # index=cell_ids
         )
         psth_left_df.columns.name = 'Time (ms)'
         psth_left_df.index.name = 'Cell ID'
@@ -778,7 +884,7 @@ class Session:
         psth_right_df = pd.DataFrame(
             data_right['psth_matrix'],
             columns=data_right['bin_centers'],
-            index=cell_ids
+            # index=cell_ids
         )
         psth_right_df.columns.name = 'Time (ms)'
         psth_right_df.index.name = 'Cell ID'
@@ -910,7 +1016,7 @@ class Session:
             psth_left_df = pd.DataFrame(
                 data_l['psth_matrix'],
                 columns=data_l['bin_centers'],
-                index=cell_ids
+                # index=cell_ids
             )
             psth_left_df.columns.name = 'Time (ms)'
             psth_left_df.index.name = 'Cell ID'
@@ -918,7 +1024,7 @@ class Session:
             psth_right_df = pd.DataFrame(
                 data_r['psth_matrix'],
                 columns=data_r['bin_centers'],
-                index=cell_ids
+                # index=cell_ids
             )
             psth_right_df.columns.name = 'Time (ms)'
             psth_right_df.index.name = 'Cell ID'
@@ -1063,7 +1169,7 @@ class Session:
                 psth_df = pd.DataFrame(
                     reordered_matrix,
                     columns=data['bin_centers'],
-                    index=cell_order
+                    # index=cell_order
                 )
                 psth_df.columns.name = 'Time (ms)'
                 psth_df.index.name = 'Cell ID'

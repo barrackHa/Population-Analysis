@@ -49,9 +49,11 @@ class Cell:
             DataFrame containing all trials for a single cell
         """
         self.data = cell_df.copy().reset_index(drop=True)
-        self.cell_id = cell_df.iloc[0]['cell_ID']
+        self.cell_id = cell_df.iloc[0]['cell_ID'].astype(int)
         self.cell_type = cell_df.iloc[0]['cell_type']
         self.sessions = cell_df['trial_session'].unique()
+
+        assert len(self.sessions) == 1, "Cell data should belong to a single session"
         
         # Sort data by relevant columns for organized plotting
         self.data = self.data.sort_values(by=['type', 'dir', 'ssd_number', 'trial_failed']).reset_index(drop=True)
@@ -60,6 +62,10 @@ class Cell:
         self.trial_types = sorted(self.data['type'].unique())
         self.directions = sorted(self.data['dir'].unique())
         self.ssd_numbers = sorted(self.data['ssd_number'].dropna().unique())
+
+        # Placeholder for baseline firing rate
+        # FR in spikes/sec
+        self._baseline_FR = None  
         
         if verbose:
             print(f"Cell {self.cell_id} initialized:")
@@ -68,6 +74,27 @@ class Cell:
             print(f"  - Directions: {self.directions}")
             print(f"  - SSD numbers: {self.ssd_numbers}")
     
+    @property
+    def baseline_FR(self):
+        if self._baseline_FR is not None:
+            return self._baseline_FR
+        else:
+            # Calculate baseline firing rate from -500 to 0 ms before go_cue
+            _, spike_counts, n_trials = self.aggregate_spikes_by_bins(
+            epok=[-500, 0], bin_size=1,
+            alignment_point='go_cue', trial_type=None, 
+            direction=None, ssd_number=None, 
+            success_only=False, normalize=False
+        ) 
+        base_FR = (spike_counts / n_trials).mean() * 1000  # spikes/sec
+        self._baseline_FR = base_FR
+        return self._baseline_FR
+    
+    def __repr__(self):
+        return (f"Cell {self.cell_id} | Type: {self.cell_type} | "
+                f"Trials: {len(self.data)} | Directions: {self.directions} | "
+                f"Trial Types: {self.trial_types} | SSDs: {self.ssd_numbers}")
+
     def align_spikes_to_event(self, alignment_point='go_cue'):
         """
         Align spike times to a specific event (go_cue, stop_cue, or saccade onset).
@@ -366,6 +393,9 @@ class Cell:
                 spike_counts = zscore(spike_counts, axis=1)
             except AxisError:
                 spike_counts = zscore(spike_counts)
+            
+            if not np.all(spike_counts == 0):
+                spike_counts = spike_counts / np.abs(spike_counts).max()
         
         return bin_centers, spike_counts, len(filtered_data)
     
