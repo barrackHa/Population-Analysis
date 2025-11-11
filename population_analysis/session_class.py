@@ -751,11 +751,7 @@ class Session:
         bin_centers = data['bin_centers']
         params = data['params']
         cell_ids = data['cell_ids']
-        sort_idx = data.get('sort_idx', cell_ids)
         
-        if sort_idx is None:
-            sort_idx = cell_ids
-
         # Create DataFrame for heatmap with named axes
         psth_df = pd.DataFrame(
             psth_matrix,
