@@ -95,8 +95,8 @@ class Session:
             if dirs_condition or trial_types_condition:
                 self.drop_cell_from_session(id)
                 i += 1
-        
-        print(f"Dropped {i} cell(s) with incomplete trial type or directional data.")
+        if (i > 0):
+            print(f"Dropped {i} cell{'s' if (i > 1) else ''} with incomplete trial type or directional data.")
     
     def get_cell_data(self, cell_id: Union[int, str, Cell]) -> pd.DataFrame:
         """
@@ -205,7 +205,7 @@ class Session:
             if True look center to the mean firing rate
         normalize_bins : bool
             If True, z-score spike counts before calculating firing rate (default: False)
-        normalize : bool
+        normalize : bool or 'by_max' or 'by_baseline_FR'
             If True, normalize firing rate by cell's baseline firing rate
             
         Returns:
@@ -238,12 +238,12 @@ class Session:
             delta=delta,
             normalize_bins=normalize_bins
         )
-
-        if ((normalize == True) or (normalize == 'by_max')):
-            if normalize and (not np.array_equal(firing_rate, np.zeros_like(firing_rate))):
+        
+        if (not np.array_equal(firing_rate, np.zeros_like(firing_rate))):
+            if ((normalize == True) or (normalize == 'by_max')):
                 firing_rate = firing_rate / np.abs(firing_rate).max() if firing_rate is not None else firing_rate
-        elif normalize == 'by_baseline_FR':
-            firing_rate = firing_rate - cell.baseline_FR
+            elif normalize == 'by_baseline_FR':
+                firing_rate = firing_rate - cell.baseline_FR if firing_rate is not None else firing_rate
 
         return bin_centers, firing_rate, n_trials
     
