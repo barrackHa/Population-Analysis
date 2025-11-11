@@ -876,7 +876,6 @@ class PopulationAnalyzer:
             
             # Create raster
             overlay = hv.NdOverlay()
-            trial_markers = []  # Store trial type boundaries
             
             for i, (idx, row) in enumerate(dir_data.iterrows()):
                 spikes = row['spikes_aligned_to_go_cue']
