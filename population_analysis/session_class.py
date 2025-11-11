@@ -1122,7 +1122,6 @@ class Session:
             return None
         
         cell_order = data_go['cell_ids']
-        n_cells = len(cell_order)
         
         # Get epoch for STOP/CONT trials
         epok_stop = kwargs.get('epok_stop', [-200, 700])
