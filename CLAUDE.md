@@ -8,9 +8,10 @@
 5. [File Organization](#file-organization)
 6. [Key Methods Reference](#key-methods-reference)
 7. [Workflow & Usage Patterns](#workflow--usage-patterns)
-8. [Coding Guidelines](#coding-guidelines)
-9. [Visualization Standards](#visualization-standards)
-10. [Important Implementation Notes](#important-implementation-notes)
+8. [PCA Analysis](#pca-analysis) **(NEW)**
+9. [Coding Guidelines](#coding-guidelines)
+10. [Visualization Standards](#visualization-standards)
+11. [Important Implementation Notes](#important-implementation-notes)
 
 ---
 
@@ -169,12 +170,16 @@ This naming convention can be confusing but reflects the experimental design whe
 - **Adaptive staircase**: Delays adjusted during session to maintain ~50% stop success rate
 
 ### Key Temporal Events
-1. **go_cue**: Visual target appears, signals saccade initiation (all trials)
-2. **stop_cue**: Secondary signal appears (STOP/CONT trials only)
+1. **Fixation period** (t < 0): Subject fixates at center waiting for target to appear
+2. **go_cue** (t = 0): Visual target appears, signals saccade initiation (all trials)
+3. **stop_cue**: Secondary signal appears (STOP/CONT trials only)
    - Red stop signal for STOP trials
    - Green continue signal for CONT trials
-3. **first_relevant_saccade**: Actual saccade onset time (if executed)
-4. **reaction_time**: Interval from `go_cue` to `first_relevant_saccade`
+4. **first_relevant_saccade**: Array [start, end] of saccade times (if executed)
+   - `first_relevant_saccade[0]`: Saccade start time (movement onset)
+   - `first_relevant_saccade[1]`: Saccade end time (fixation on target)
+5. **reaction_time**: Interval from `go_cue` to `first_relevant_saccade[0]`
+   - Typical RT: 100-150 ms
 
 ### Experimental Rationale
 The CONT trials serve as a critical control condition:
@@ -209,8 +214,8 @@ Unified cell-trial database stored as pickle file: `msn_fiona_cell_trial_data.pk
 # Temporal events (timestamps in ms)
 'go_cue'            # Go signal time
 'stop_cue'          # Stop signal (STOP) OR Continue signal (CONT) time (NaN for GO trials)
-'first_relevant_saccade'  # Saccade onset time
-'reaction_time'     # RT from go_cue to saccade
+'first_relevant_saccade'  # Array [start, end]: saccade start time (movement onset) and end time (target fixation)
+'reaction_time'     # RT from go_cue to first_relevant_saccade[0]
 
 # Neural data
 'neural_data'       # Array of spike times (absolute timestamps)
@@ -235,46 +240,66 @@ Unified cell-trial database stored as pickle file: `msn_fiona_cell_trial_data.pk
 ### Class Hierarchy
 
 ```
-PopulationAnalyzer (analysis.ipynb)
+PopulationAnalyzer (cell_analysis.py)
 ├── Manages full cell database
 └── Creates → Cell objects
 
-Cell (analysis.ipynb)
+Cell (cell_analysis.py)
 ├── Single neuron analysis
 ├── Trial-level operations
+├── Baseline firing rate calculation
 └── Individual cell visualizations
 
 Session (session_class.py)
 ├── Session-level population analysis
 ├── Multi-cell population operations
+├── PCA-ready data preparation
+├── Train/test data splitting
 └── Population visualizations
 ```
 
 ### Cell Class
-**Location**: `population_analysis/analysis.ipynb`
+**Location**: `population_analysis/cell_analysis.py` (moved from analysis.ipynb)
 
 **Purpose**: Single-cell analysis with trial-level visualizations
 
 **Key Features**:
 - Spike alignment to task events
 - Trial filtering and sorting
+- **NEW**: Baseline firing rate property
 - Raster plots (color-coded by condition)
 - Histograms (spike counts)
 - PSTH (firing rate with smoothing)
+- **NEW**: Mean-centered firing rate (delta parameter)
+- **NEW**: Configurable smoothing kernel size
+
+**Properties**:
+```python
+baseline_FR  # Baseline firing rate (spikes/sec) calculated from -500 to 0 ms before go_cue
+```
 
 **Core Methods**:
 ```python
 # Data operations
 align_spikes_to_event(alignment_point)
 filter_trials(trial_type, direction, ssd_number, success_only, failed_only)
-aggregate_spikes_by_bins(epok, bin_size, ...)
-calculate_psth(epok, bin_size, smooth=True, ...)
+aggregate_spikes_by_bins(epok, bin_size, normalize=False, ...)
+calculate_psth(epok, bin_size, smooth=True, delta=False,
+               smooth_ker_size=25, normalize_bins=False, ...)
 
 # Visualizations
 plot_raster_by_type_direction(epok, alignment_point, show_legend)
 plot_histogram_by_type_direction(epok, bin_size, separate_ssd, normalize)
-plot_psth_by_type_direction(epok, bin_size, separate_ssd, smooth)
+plot_psth_by_type_direction(epok, bin_size, separate_ssd, smooth,
+                             delta=False, smooth_ker_size=25,
+                             normalize_bins=False)
 ```
+
+**NEW Parameters**:
+- `delta` (bool): If True, center PSTH to mean firing rate (subtract mean)
+- `smooth_ker_size` (int): Gaussian smoothing kernel size (default: 25)
+- `normalize_bins` (bool): If True, z-score normalize spike counts before PSTH calculation
+- `verbose` (bool): Print initialization details
 
 ### Session Class
 **Location**: `population_analysis/session_class.py`
@@ -287,30 +312,68 @@ plot_psth_by_type_direction(epok, bin_size, separate_ssd, smooth)
 
 **Key Features**:
 - Global normalization (preserves relative cell differences)
+- **NEW**: Baseline FR normalization option
 - Peak-based cell ordering
 - Multi-condition comparisons
 - Grid layouts for comprehensive views
+- **NEW**: Cell filtering and validation
+- **NEW**: Train/test data splitting for PCA
 
-**Core Methods**:
+**Properties**:
 ```python
-# Data generation methods
-get_cell_psth(cell_id, epok, bin_size, alignment_point, trial_type, 
-              direction, ssd_number, success_only, smooth)
-get_all_cells_psth(epok, bin_size, ..., normalize=True)
-get_population_data_single_condition(epok, bin_size, alignment_point, 
-                                      trial_type, direction, ssd_number, 
-                                      success_only, smooth, normalize, 
-                                      sort_by_peak)
-get_population_data_left_right(epok, bin_size, alignment_point, 
-                                trial_type, success_only, smooth, normalize)
-get_population_data_trial_types(epok_go, epok_stop, bin_size, direction, 
-                                 ssd_number, success_only, smooth, normalize)
+cells  # Generator yielding Cell instances for all cells in session
+```
+
+**Core Data Methods**:
+```python
+# Cell access and filtering (NEW)
+get_cell_data(cell_id)  # Get DataFrame for specific cell
+get_cell(cell_id, verbose=False)  # Get Cell instance for specific cell
+drop_cell_from_session(cell_id)  # Remove cell from session
+drop_cells_with_missing_trial_type_or_dir_data()  # Remove incomplete cells
+get_cells_with_no_spikes(as_percentage=False)  # Count cells with no activity
+
+# PSTH generation (UPDATED)
+get_cell_psth(cell_id, epok, bin_size, alignment_point, trial_type,
+              direction, ssd_number, success_only, smooth, delta=False,
+              smooth_ker_size=25, normalize_bins=False, normalize=False)
+              # normalize options: False, True, 'by_max', 'by_baseline_FR'
+
+get_all_cells_psth(epok, bin_size, ..., normalize=False)
+
+# Spike counts (for PCA)
+get_cell_spike_counts(cell_id, epok, bin_size, alignment_point, ...)
+get_all_cells_spike_counts(epok, bin_size, ..., normalize=True)
+
+# Population data generation
+get_population_spike_counts_data(epok, bin_size, alignment_point,
+                                  trial_type, direction, ssd_number,
+                                  success_only, normalize, sort_by_peak)
+
+get_population_PSTH_single_condition(epok, bin_size, alignment_point,
+                                      trial_type, direction, ssd_number,
+                                      success_only, smooth, delta=False,
+                                      smooth_ker_size=25, normalize_bins=False,
+                                      normalize=False, sort_by_peak=True)
+
+get_population_PSTHs_left_right(epok, bin_size, alignment_point,
+                                trial_type, success_only, smooth, delta=False,
+                                smooth_ker_size=25, normalize_bins=False,
+                                normalize=False, sort_by_peak=True)
+
+get_population_PSTHs_trial_types(epok_go, epok_stop, bin_size, direction,
+                                  ssd_number, success_only, smooth, normalize)
+
+# PCA support (NEW)
+split_to_train_test(test_fraction=0.5, random_state=None)
+  # Returns: (train_session, test_session) - both Session instances
 
 # Plotting methods
-plot_population_heatmap(data, **kwargs)  # Single condition, 800×600px
-plot_left_right_comparison(data, **kwargs)  # 2 columns, 400×600px each
-plot_trial_type_comparison(data_left, data_right, **kwargs)  # 3×2 grid
-plot_trial_type_by_ssd(trial_type, ssd_numbers, **kwargs)  # 4×2 grid
+plot_population_PSTH_heatmap(data, **kwargs)  # Single condition, 800×600px
+plot_population_spike_counts_heatmap(data, **kwargs)  # Spike counts heatmap
+plot_left_right_PSTH_comparison(data, **kwargs)  # 2 columns, 400×600px each
+plot_trial_type_PSTH_comparison(data_left, data_right, **kwargs)  # 3×2 grid
+plot_trial_type_PSTH_by_ssd(trial_type, ssd_numbers, **kwargs)  # 4×2 grid
 ```
 
 ---
@@ -324,12 +387,23 @@ population_analysis/
 ├── README.md                    # Project overview
 ├── requirements.txt             # Python dependencies
 ├── data/
-│   └── unified_cell_trial_data/
-│       └── msn_fiona_cell_trial_data.pkl  # Main database
+│   ├── unified_cell_trial_data/
+│   │   └── msn_fiona_cell_trial_data.pkl  # Main database
+│   └── PCA_data/                # Saved PCA results (numpy arrays)
 ├── population_analysis/
-│   ├── analysis.ipynb           # Cell class & single-cell analysis
+│   ├── cell_analysis.py         # Cell & PopulationAnalyzer classes
 │   ├── session_class.py         # Session class for population analysis
+│   ├── plot_PCA_in_3D.py        # 3D PCA trajectory plotting utilities
+│   ├── analysis.ipynb           # Legacy single-cell analysis notebook
+│   ├── msn_analysis.ipynb       # MSN-specific analysis examples
 │   ├── session_analysis.ipynb   # Session class demonstrations
+│   ├── session_PCA_analysis.ipynb  # Single-session PCA analysis workflow
+│   ├── multi_session_PCA_analysis.ipynb  # Multi-session PCA analysis **(NEW)**
+│   ├── pca_helpers.py           # Worker functions for parallel PCA processing **(NEW)**
+│   ├── test_cell_class.ipynb    # Cell class testing notebook
+│   ├── test_session_class.ipynb # Session class testing notebook
+│   ├── test_session_PSTH.ipynb  # PSTH method testing notebook
+│   ├── pytest_test_cell_class.py # Pytest unit tests for Cell class
 │   ├── maestro_file.py          # Maestro file parsing utilities
 │   └── pre_proc_helper.py       # Preprocessing helpers
 ├── data_pre_proc/               # Data preprocessing notebooks
@@ -339,15 +413,47 @@ population_analysis/
 
 ### Key Files
 
-#### 1. `session_class.py`
-- **Purpose**: Session-level population analysis
-- **Size**: ~780 lines
-- **Main class**: `Session`
-- **Dependencies**: pandas, numpy, holoviews, scipy.ndimage
+#### 1. `cell_analysis.py` (NEW - formerly in analysis.ipynb)
+- **Purpose**: Single-cell and population-level analysis classes
+- **Size**: ~1000 lines
+- **Main classes**: `Cell`, `PopulationAnalyzer`
+- **Dependencies**: pandas, numpy, holoviews, scipy.ndimage, scipy.stats
+- **Key Features**:
+  - Baseline firing rate calculation
+  - PSTH with delta (mean-centered) option
+  - Configurable smoothing kernel size
+  - Normalization by baseline FR or max FR
 
-#### 2. `session_analysis.ipynb`
+#### 2. `session_class.py`
+- **Purpose**: Session-level population analysis
+- **Size**: ~1220 lines
+- **Main class**: `Session`
+- **Dependencies**: pandas, numpy, holoviews, sklearn.model_selection
+- **New Features**:
+  - Cell filtering and data validation methods
+  - Train/test data splitting for PCA
+  - Enhanced normalization options
+  - Baseline FR normalization support
+
+#### 3. `plot_PCA_in_3D.py` (NEW)
+- **Purpose**: 3D visualization of PCA trajectories
+- **Size**: ~60 lines
+- **Functionality**: Plots neural population trajectories in PC space
+- **Uses**: matplotlib 3D plotting for GO vs STOP/CONT comparison
+
+#### 4. `session_PCA_analysis.ipynb` (NEW)
+- **Purpose**: Complete PCA analysis workflow
+- **Key Sections**:
+  - Data preparation and normalization
+  - Train/test split for cross-validation
+  - PCA fitting and transformation
+  - 3D trajectory visualization
+  - GO vs STOP/CONT trial comparison in PC space
+  - Explained variance analysis
+
+#### 5. `session_analysis.ipynb`
 - **Purpose**: Demonstration notebook for Session class
-- **Sections**: 
+- **Sections**:
   - Setup and imports
   - Example 1: Single condition heatmap
   - Example 2: Left vs right comparison
@@ -355,11 +461,15 @@ population_analysis/
   - Example 4a: STOP trials by SSD (4×2)
   - Example 4b: CONT trials by SSD (4×2)
 
-#### 3. `analysis.ipynb`
-- **Purpose**: Cell class and single-cell analysis
-- **Size**: ~2000+ lines
-- **Main classes**: `Cell`, `PopulationAnalyzer`
+#### 6. `analysis.ipynb`
+- **Purpose**: Legacy single-cell analysis notebook
+- **Note**: Cell class now in `cell_analysis.py`
 - **Includes**: Comprehensive single-cell visualizations
+
+#### 7. `pytest_test_cell_class.py` (NEW)
+- **Purpose**: Unit tests for Cell class
+- **Framework**: pytest
+- **Tests**: Baseline FR calculation, PSTH generation, spike alignment
 
 ---
 
@@ -379,35 +489,100 @@ def align_spikes_to_event(self, alignment_point='go_cue'):
     """
 ```
 
-### PSTH Calculation
+### PSTH Calculation (UPDATED)
 ```python
 def calculate_psth(self, epok=[-200, 700], bin_size=10,
-                   alignment_point='go_cue', trial_type=None, 
-                   direction=None, ssd_number=None, 
-                   success_only=True, smooth=True):
+                   alignment_point='go_cue', trial_type=None,
+                   direction=None, ssd_number=None,
+                   success_only=True, smooth=True,
+                   delta=False, smooth_ker_size=25,
+                   normalize_bins=False):
     """
     Calculate firing rate with Gaussian smoothing.
-    
-    Smoothing: sigma=bin_size, truncate=2
-    - For bin_size=10ms: ±20ms smoothing window
-    
+
+    NEW PARAMETERS:
+    - delta (bool): If True, subtract mean firing rate to center around zero
+    - smooth_ker_size (int): Gaussian smoothing kernel size (default: 25)
+                            Previous versions used bin_size as sigma
+    - normalize_bins (bool): If True, z-score normalize spike counts before
+                            converting to firing rate
+
+    Smoothing: sigma=smooth_ker_size, truncate=2
+    - For smooth_ker_size=25ms: ±50ms smoothing window (2*sigma)
+    - Smoothing applied BEFORE epoch trimming to avoid edge effects
+
     Returns: (bin_centers, firing_rate, n_trials)
     """
 ```
 
-### Global Normalization
+### Baseline Firing Rate (NEW)
 ```python
-def get_all_cells_psth(self, ..., normalize=True):
+@property
+def baseline_FR(self):
     """
-    CRITICAL: Global normalization across all cells.
-    
-    Process:
-    1. Collect all PSTHs without normalization
-    2. Find global_max across entire population
-    3. Divide all values by global_max
-    
-    Result: Preserves relative firing rate differences
-    NOT per-cell [0,1] normalization
+    Calculate baseline firing rate from -500 to 0 ms before go_cue.
+
+    Calculated once and cached in _baseline_FR.
+
+    Returns: Firing rate in spikes/sec
+    """
+```
+
+### Global Normalization (UPDATED)
+```python
+def get_all_cells_psth(self, ..., normalize=False):
+    """
+    Flexible normalization options for population PSTHs.
+
+    normalize options:
+    - False: No normalization (raw firing rates)
+    - True or 'by_max': Divide each cell by its max firing rate
+    - 'by_baseline_FR': Subtract baseline firing rate from each cell
+
+    When normalize=False (NEW default):
+    - Preserves actual firing rate magnitudes
+    - Use for PCA and quantitative comparisons
+
+    When normalize=True:
+    - Each cell normalized to [0, 1] range
+    - Better for visualizing weak and strong cells together
+
+    Result: Population matrix (n_cells × n_bins)
+    """
+```
+
+### Cell Filtering (NEW)
+```python
+def drop_cells_with_missing_trial_type_or_dir_data(self):
+    """
+    Remove cells that lack data for all trial types or directions.
+
+    Criteria:
+    - Must have both 0° and 180° direction trials
+    - Must have all 3 trial types (GO, STOP, CONT)
+
+    Essential for PCA and population analysis to ensure
+    balanced comparisons across conditions.
+    """
+```
+
+### Train/Test Split (NEW)
+```python
+def split_to_train_test(self, test_fraction=0.5, random_state=None):
+    """
+    Split session data into training and testing sets for PCA.
+
+    Uses sklearn.model_selection.train_test_split on trial level.
+
+    Parameters:
+    - test_fraction: Fraction of trials for testing (default: 0.5)
+    - random_state: Random seed for reproducibility
+
+    Returns: (train_session, test_session) - both Session instances
+
+    Use case:
+    - Fit PCA on train_session
+    - Validate generalization on test_session
     """
 ```
 
@@ -508,6 +683,411 @@ cont_comparison = session.plot_trial_type_by_ssd(
     normalize=True
 )
 ```
+
+### Pattern 5: PCA Population Dynamics Analysis (NEW)
+```python
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+import numpy as np
+
+# 1. Prepare session and split data
+session_data = cell_df[cell_df['trial_session'] == 'fi211110a']
+session = Session(session_data, verbose=True)
+session.drop_cells_with_missing_trial_type_or_dir_data()
+
+train_session, test_session = session.split_to_train_test(
+    test_fraction=0.5, random_state=42
+)
+
+# 2. Get average baseline activity (epoch being optimized, currently [-50, 150])
+avg_psth = train_session.get_population_PSTH_single_condition(
+    epok=[-50, 150], bin_size=1, alignment_point='go_cue',
+    trial_type='GO', smooth=True, smooth_ker_size=25,
+    delta=True, normalize=True
+)
+
+# 3. Get condition-specific data (left + right concatenated)
+def get_pca_matrix(session, trial_type='GO'):
+    data = session.get_population_PSTHs_left_right(
+        epok=[-50, 150], bin_size=1, alignment_point='go_cue',
+        trial_type=trial_type, smooth=True, smooth_ker_size=15,
+        delta=True, normalize=True
+    )
+    left = data['left']['psth_matrix'] - avg_psth['psth_matrix']
+    right = data['right']['psth_matrix'] - avg_psth['psth_matrix']
+    return np.concatenate([left, right], axis=1)
+
+# 4. Fit PCA on training data
+train_matrix = get_pca_matrix(train_session, 'GO')
+scaler = StandardScaler()
+train_scaled = scaler.fit_transform(train_matrix.T)
+pca = PCA(n_components=5)
+pca.fit(train_scaled)
+
+print(f"Explained variance: {pca.explained_variance_ratio_}")
+
+# 5. Transform test data
+test_matrix = get_pca_matrix(test_session, 'GO')
+test_scaled = scaler.transform(test_matrix.T)
+pc_scores = pca.transform(test_scaled).T
+
+# 6. Split and visualize
+cutoff = 200  # epok[1] - epok[0] = 150 - (-50)
+left_PCs = pc_scores[:, :cutoff]
+right_PCs = pc_scores[:, cutoff:]
+
+# 7. Plot 3D trajectories
+import matplotlib.pyplot as plt
+fig = plt.figure(figsize=(12, 10))
+ax = fig.add_subplot(111, projection='3d')
+ax.plot(left_PCs[0], left_PCs[1], left_PCs[2], 'b-', lw=2, label='Left')
+ax.plot(right_PCs[0], right_PCs[1], right_PCs[2], 'g-', lw=2, label='Right')
+ax.legend()
+plt.show()
+```
+
+---
+
+## PCA Analysis
+
+### Overview
+
+**Purpose**: Analyze population dynamics in a low-dimensional space using Principal Component Analysis (PCA)
+
+**Key Concept**: Neural populations traverse trajectories in a high-dimensional state space during task execution. PCA identifies the dominant dimensions (principal components) of population activity, revealing:
+- Common patterns across neurons
+- Trial-type-specific dynamics
+- Direction selectivity in neural state space
+- Temporal evolution of population activity
+
+**Workflow**: Train/test split to ensure PCA captures generalizable population dynamics
+
+**Epoch Selection**: The optimal epoch for PCA is **[-50, 150] ms** relative to go_cue (t=0):
+- **t < 0**: Fixation period - subject fixates at center waiting for target to appear
+- **t = 0 (go_cue)**: Target appears (stimulus onset)
+- **Reaction Time (RT)**: Time from go_cue to movement onset (`first_relevant_saccade[0]`), typically 100-150 ms
+- **~100-150 ms**: Movement onset (saccade begins)
+
+The **[-50, 150] epoch captures**:
+- A bit before target appearance (end of fixation)
+- Target processing and decision period
+- The entire reaction time window
+- Movement onset and shortly after
+
+This epoch differentiates trials with movement onset (GO, successful CONT, failed STOP) from trials without (successful STOP, failed CONT).
+
+### PCA Pipeline
+
+#### Step 1: Data Preparation
+```python
+# Load session data
+session_data = cell_df[cell_df['trial_session'] == 'fi211110a']
+session = Session(session_data, verbose=True)
+
+# Remove cells with incomplete data
+session.drop_cells_with_missing_trial_type_or_dir_data()
+
+# Split into train/test
+train_session, test_session = session.split_to_train_test(
+    test_fraction=0.5,
+    random_state=42
+)
+```
+
+#### Step 2: Calculate Average PSTH (Baseline)
+```python
+# Calculate average activity across all conditions (training set)
+# Note: Epoch is currently being optimized - [-50, 150] focuses on critical period
+avg_psth = train_session.get_population_PSTH_single_condition(
+    epok=[-50, 150],
+    bin_size=1,
+    alignment_point='go_cue',
+    trial_type='GO',
+    smooth=True,
+    smooth_ker_size=25,
+    delta=True,  # Mean-center the PSTH
+    normalize_bins=False,
+    normalize=True,
+    sort_by_peak=False
+)
+```
+
+#### Step 3: Get Condition-Specific Data
+```python
+def get_data_matrix_for_PCA(session, epok=[-50, 150]):
+    """
+    Get PSTH matrix for PCA with left and right trials concatenated.
+
+    Returns:
+        np.ndarray: Matrix of shape (n_cells, 2*n_bins)
+                   First n_bins columns: left direction
+                   Last n_bins columns: right direction
+    """
+    left_right_data = session.get_population_PSTHs_left_right(
+        epok=epok,
+        bin_size=1,
+        alignment_point='go_cue',
+        trial_type='GO',  # or 'STOP', 'CONT'
+        success_only=True,
+        smooth=True,
+        smooth_ker_size=15,
+        delta=True,
+        normalize_bins=False,
+        normalize=True
+    )
+
+    # Subtract average PSTH to isolate condition-specific activity
+    left = left_right_data['left']['psth_matrix'] - avg_psth['psth_matrix']
+    right = left_right_data['right']['psth_matrix'] - avg_psth['psth_matrix']
+
+    # Concatenate left and right
+    psth_matrix = np.concatenate([left, right], axis=1)
+    return psth_matrix
+```
+
+#### Step 4: Fit PCA on Training Data
+```python
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+
+def pca_mat(mat, pca_components=5):
+    """
+    Fit PCA on neural population matrix.
+
+    Parameters:
+    -----------
+    mat : np.ndarray
+        Matrix of shape (n_cells, n_time_bins*2)
+    pca_components : int
+        Number of principal components to extract
+
+    Returns:
+    --------
+    sklearn.decomposition.PCA : Fitted PCA object
+    """
+    # Standardize across time bins (each column has mean=0, std=1)
+    scaler = StandardScaler()
+    mat_for_pca = scaler.fit_transform(mat.T)
+
+    # Fit PCA
+    pca = PCA(n_components=pca_components)
+    pca.fit(mat_for_pca)
+
+    return pca
+
+# Train PCA
+train_matrix = get_data_matrix_for_PCA(train_session, epok=[-50, 150])
+pca = pca_mat(train_matrix, pca_components=5)
+
+# Check explained variance
+print(f"Explained variance ratio: {pca.explained_variance_ratio_}")
+```
+
+#### Step 5: Transform Test Data
+```python
+# Get test data
+test_matrix = get_data_matrix_for_PCA(test_session, epok=[-50, 150])
+
+# Transform to PC space
+pc_scores = pca.transform(test_matrix.T).T  # Shape: (n_components, n_time_bins*2)
+
+# Split into left and right directions
+epok = [-50, 150]
+cutoff = epok[1] - epok[0]  # 200 time bins
+left_PCs = pc_scores[:, :cutoff]   # First half: left direction
+right_PCs = pc_scores[:, cutoff:]  # Second half: right direction
+```
+
+#### Step 6: Visualize 3D Trajectories
+```python
+def plot_3D_PC_trajectories(left_PCs, right_PCs, time):
+    """
+    Plot neural trajectories in 3D PC space.
+
+    Parameters:
+    -----------
+    left_PCs : np.ndarray
+        PC scores for left direction, shape (n_components, n_time_bins)
+    right_PCs : np.ndarray
+        PC scores for right direction, shape (n_components, n_time_bins)
+    time : np.ndarray
+        Time vector
+    """
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d import Axes3D
+
+    fig = plt.figure(figsize=(12, 10))
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Plot left trajectory (180°)
+    ax.plot(left_PCs[0, :], left_PCs[1, :], left_PCs[2, :],
+            color='blue', linewidth=2, label='Left (180°)')
+
+    # Plot right trajectory (0°)
+    ax.plot(right_PCs[0, :], right_PCs[1, :], right_PCs[2, :],
+            color='green', linewidth=2, label='Right (0°)')
+
+    # Mark start points
+    ax.scatter(left_PCs[0, 0], left_PCs[1, 0], left_PCs[2, 0],
+               marker='^', s=200, color='blue', edgecolors='black',
+               linewidths=2, label='Left Start', zorder=5)
+
+    ax.scatter(right_PCs[0, 0], right_PCs[1, 0], right_PCs[2, 0],
+               marker='^', s=200, color='green', edgecolors='black',
+               linewidths=2, label='Right Start', zorder=5)
+
+    # Labels
+    ax.set_xlabel('PC1', fontsize=14)
+    ax.set_ylabel('PC2', fontsize=14)
+    ax.set_zlabel('PC3', fontsize=14)
+    ax.set_title('Left vs Right 3D PC Trajectories', fontsize=16)
+    ax.legend(fontsize=12)
+
+    return fig, ax
+
+# Plot
+time = np.arange(epok[0], epok[1])
+fig, ax = plot_3D_PC_trajectories(left_PCs, right_PCs, time)
+plt.show()
+```
+
+#### Step 7: Compare GO vs STOP/CONT Trials
+```python
+# Get STOP trial data in PC space
+stop_data = test_session.get_population_PSTHs_left_right(
+    epok=[-50, 150],  # Use same epoch as training
+    bin_size=1,
+    alignment_point='go_cue',  # or 'stop_cue' for alignment to stop signal
+    trial_type='STOP',
+    success_only=True,
+    smooth=True,
+    smooth_ker_size=25,
+    delta=True,
+    normalize_bins=False,
+    normalize=False
+)
+
+# Subtract baseline
+left_stop = stop_data['left']['psth_matrix'] - avg_psth['psth_matrix']
+right_stop = stop_data['right']['psth_matrix'] - avg_psth['psth_matrix']
+stop_matrix = np.concatenate([left_stop, right_stop], axis=1)
+
+# Transform to PC space
+stop_pc_scores = pca.transform(stop_matrix.T).T
+stop_left_PCs = stop_pc_scores[:, :cutoff]
+stop_right_PCs = stop_pc_scores[:, cutoff:]
+
+# Visualize GO vs STOP trajectories
+fig = plt.figure(figsize=(12, 10))
+ax = fig.add_subplot(111, projection='3d')
+
+# GO trials
+ax.plot(left_PCs[0, :], left_PCs[1, :], left_PCs[2, :],
+        color='blue', linewidth=2, label='GO Left')
+ax.plot(right_PCs[0, :], right_PCs[1, :], right_PCs[2, :],
+        color='green', linewidth=2, label='GO Right')
+
+# STOP trials
+ax.plot(stop_left_PCs[0, :], stop_left_PCs[1, :], stop_left_PCs[2, :],
+        color='red', linewidth=2, linestyle='dashed', label='STOP Left')
+ax.plot(stop_right_PCs[0, :], stop_right_PCs[1, :], stop_right_PCs[2, :],
+        color='orange', linewidth=2, linestyle='dashed', label='STOP Right')
+
+# Start markers
+ax.scatter(left_PCs[0, 0], left_PCs[1, 0], left_PCs[2, 0],
+           marker='^', s=200, color='blue', edgecolors='black', linewidths=2)
+ax.scatter(stop_left_PCs[0, 0], stop_left_PCs[1, 0], stop_left_PCs[2, 0],
+           marker='*', s=200, color='red', edgecolors='black', linewidths=2)
+
+ax.set_xlabel('PC1'); ax.set_ylabel('PC2'); ax.set_zlabel('PC3')
+ax.set_title('GO vs STOP Trajectories in PC Space')
+ax.legend()
+plt.show()
+```
+
+### Key Insights from PCA
+
+1. **Trajectory Separation**: GO left and GO right trajectories diverge in PC space, indicating direction-selective population activity
+
+2. **STOP Signal Effect**: STOP trial trajectories may:
+   - Start similarly to GO trials
+   - Diverge after stop signal presentation
+   - Terminate earlier or follow different path
+
+3. **Explained Variance**: First 3 PCs typically capture 60-80% of population variance
+
+4. **Temporal Dynamics**: Time evolution along PC trajectories reveals:
+   - Initiation phase (similar across conditions)
+   - Decision phase (divergence based on trial type)
+   - Execution phase (direction-specific patterns)
+
+### Best Practices for PCA
+
+1. **Always use train/test split**: Prevents overfitting to specific trial noise
+2. **Subtract average PSTH**: Isolates condition-specific activity patterns
+3. **Standardize before PCA**: Ensures each time bin contributes equally
+4. **Use mean-centered PSTHs** (`delta=True`): Removes cell-specific baseline differences
+5. **Smooth PSTHs**: Reduces high-frequency noise (typical `smooth_ker_size=15-25`)
+6. **Epoch selection** (`[-50, 150]`): Capture from just before go_cue to just after movement onset
+   - Includes end of fixation, target processing, reaction time, and movement initiation
+   - Differentiates movement vs. no-movement trials
+7. **Check explained variance**: Ensure first few PCs capture substantial variance
+8. **Save PCA results**: Store PC scores as numpy arrays for later analysis
+
+### Data Storage
+
+```python
+# Save PC scores for later use
+np.save('data/PCA_data/go_left_PCs.npy', left_PCs)
+np.save('data/PCA_data/go_right_PCs.npy', right_PCs)
+np.save('data/PCA_data/stop_left_PCs.npy', stop_left_PCs)
+np.save('data/PCA_data/stop_right_PCs.npy', stop_right_PCs)
+np.save('data/PCA_data/time_vector.npy', time)
+
+# Load later
+left_PCs = np.load('data/PCA_data/go_left_PCs.npy')
+```
+
+### Multi-Session PCA **(NEW)**
+
+**Purpose**: Combine neural populations across multiple recording sessions for larger-scale PCA analysis.
+
+**Files**:
+- `population_analysis/multi_session_PCA_analysis.ipynb` - Main analysis notebook
+- `population_analysis/pca_helpers.py` - Worker functions for parallel processing
+
+**Key Differences from Single-Session**:
+- Combines 1000+ cells from 40+ sessions (vs. 10-50 cells from one session)
+- Uses ProcessPoolExecutor for parallel PSTH extraction
+- No train/test split (all data used, cross-session variability provides validation)
+- Memory-efficient: discards Session objects after extracting PSTH matrices
+- Tracks cell-to-session mapping for post-hoc analysis
+
+**Configuration**:
+```python
+EPOK = [-50, 150]  # ms relative to go_cue
+BIN_SIZE = 1  # ms
+NORMALIZE = 'by_baseline_FR'  # Subtract baseline FR from each cell
+N_PCA_COMPONENTS = 5
+MIN_CELLS_PER_SESSION = 10  # Validation threshold
+MIN_TRIALS_PER_CONDITION = 5  # Validation threshold
+```
+
+**Workflow**:
+1. Validate sessions (sufficient cells and trials per condition)
+2. Extract PSTH matrices in parallel using `pca_helpers.extract_session_psth_worker()`
+3. Concatenate matrices across all sessions
+4. Fit PCA on combined population
+5. Project GO and STOP data to PC space
+6. Visualize trajectories and save results to `data/PCA_data/multi_session/`
+
+**Example Results (Fiona, 40 sessions, 1,322 cells)**:
+- PC1-3: 81.2% variance explained
+- PC1-5: 89.7% variance explained
+- Clear GO left/right trajectory separation
+- STOP trajectories diverge from GO after signal onset
+
+**Important**: Worker function must be in separate `.py` module (not notebook) for ProcessPoolExecutor pickling.
 
 ---
 
@@ -747,16 +1327,22 @@ if trial_type in ['STOP', 'CONT']:
         data = data[data['ssd_number'] == ssd_number]
 ```
 
-### 5. Module Reloading During Development
+### 5. Module Reloading During Development (UPDATED)
 ```python
-# In Jupyter notebooks
+# In Jupyter notebooks - reload both modules
 import importlib
 import session_class
+import cell_analysis  # NEW: Cell class now in separate module
+
+importlib.reload(cell_analysis)
 importlib.reload(session_class)
+
+from cell_analysis import Cell, PopulationAnalyzer
 from session_class import Session
 
 # Then recreate objects
 session = Session(session_data)
+cell = Cell(cell_data)
 ```
 
 ### 6. HoloViews Layout Management
@@ -877,18 +1463,27 @@ git status
 ### Most Common Operations
 ```python
 # Load data
-cell_df = pd.read_pickle('msn_fiona_cell_trial_data.pkl')
+from cell_analysis import Cell, PopulationAnalyzer
+from session_class import Session
+cell_df = pd.read_pickle('data/unified_cell_trial_data/msn_fiona_cell_trial_data.pkl')
 
-# Single cell
-cell = Cell(cell_df[cell_df['cell_ID'] == cell_id])
-cell.plot_psth_by_type_direction(smooth=True)
+# Single cell (NEW: from cell_analysis.py)
+cell_data = cell_df[cell_df['cell_ID'] == cell_id]
+cell = Cell(cell_data, verbose=True)
+cell.plot_psth_by_type_direction(smooth=True, delta=False, smooth_ker_size=25)
+print(f"Baseline FR: {cell.baseline_FR:.2f} spikes/sec")
 
 # Population
 session = Session(cell_df[cell_df['trial_session'] == 'fi211110a'])
-session.plot_trial_type_comparison(epok_go=[-200, 700], bin_size=10)
+session.drop_cells_with_missing_trial_type_or_dir_data()
+session.plot_trial_type_PSTH_comparison(epok_go=[-200, 700], bin_size=10)
 
 # SSD analysis
-session.plot_trial_type_by_ssd(trial_type='STOP', epok_stop=[-200, 700])
+session.plot_trial_type_PSTH_by_ssd(trial_type='STOP', epok_stop=[-200, 700])
+
+# PCA analysis (NEW)
+train, test = session.split_to_train_test(test_fraction=0.5, random_state=42)
+# ... (see PCA Analysis section for full workflow)
 ```
 
 ### Common Epochs
@@ -896,6 +1491,7 @@ session.plot_trial_type_by_ssd(trial_type='STOP', epok_stop=[-200, 700])
 - **Standard**: [-200, 700]
 - **Pre-stimulus**: [-200, 0]
 - **Post-stimulus**: [0, 700]
+- **PCA epoch**: [-50, 150] (from before go_cue to after movement onset - captures fixation end, target processing, reaction time, and movement initiation)
 
 ### Example Session: fi211110a
 One of the best recording sessions with high cell count and good trial distribution.
@@ -916,7 +1512,19 @@ One of the best recording sessions with high cell count and good trial distribut
 
 ---
 
-**Last Updated**: October 2025  
-**Project Lead**: Barak  
-**AI Assistant**: Claude (Anthropic)  
+**Last Updated**: November 2025
+**Project Lead**: Barak
+**AI Assistant**: Claude (Anthropic)
 **Repository**: Population-Analysis (cell_db branch)
+
+### Recent Changes (November 2025):
+- **Cell class** moved from `analysis.ipynb` to `cell_analysis.py`
+- Added **baseline firing rate** calculation and property
+- Added **PCA analysis** workflow and methods
+- Implemented **train/test split** for cross-validation
+- Enhanced **normalization options** (by_max, by_baseline_FR)
+- Added **delta parameter** for mean-centered PSTHs
+- Configurable **smoothing kernel size** (smooth_ker_size)
+- New **cell filtering methods** for data quality control
+- Added **pytest unit tests** for Cell class
+- Comprehensive **3D trajectory visualization** in PC space
