@@ -963,7 +963,6 @@ class Session:
         
         # Use left direction's cell ordering for both
         cell_order = data_left['cell_order']
-        n_cells = len(cell_order)
         
         # Reorder right direction data to match left
         for trial_key in ['go', 'stop', 'cont']:
