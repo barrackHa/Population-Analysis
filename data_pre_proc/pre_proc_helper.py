@@ -313,7 +313,10 @@ class DataFrameBuilder:
         monkey = self.monkey_name
         base_path = Path.cwd().parent / 'data' / f'{monkey}_sst'
         dirs = [d for d in base_path.iterdir() if d.is_dir()]
-        dirs.remove(base_path / 'trial_names')
+        try:
+            dirs.remove(base_path / 'trial_names')
+        except ValueError:
+            pass
         return dirs
     
     def get_files_list(self):
@@ -401,7 +404,8 @@ def test_dataframe_builder():
 
 #%% Analysis Fiona and Yasmin for real
 def create_and_save_monkeys_df():
-    for monkey in ['fiona', 'yasmin']:
+    # for monkey in ['fiona', 'yasmin']:
+    for monkey in ['fiona']:
         print(f"Processing monkey: {monkey}")
         base_data_dir = Path.cwd().parent / 'data' / f'{monkey}_sst'
         if not base_data_dir.exists():
