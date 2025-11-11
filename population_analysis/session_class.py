@@ -3,7 +3,6 @@ import numpy as np
 import holoviews as hv
 from typing import Union
 from holoviews import opts
-from scipy.ndimage import gaussian_filter1d
 from cell_analysis import Cell
 from sklearn.model_selection import train_test_split
 
