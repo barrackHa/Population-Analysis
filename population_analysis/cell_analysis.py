@@ -18,7 +18,6 @@ import numpy as np
 import holoviews as hv
 from holoviews import opts
 from scipy.ndimage import gaussian_filter1d
-import hvplot.pandas  # Enable hvplot for pandas DataFrames
 from scipy.stats import zscore
 from numpy.exceptions import AxisError
 
