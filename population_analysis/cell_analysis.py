@@ -440,7 +440,7 @@ class Cell:
         """
         # Get spike counts from aggregate_spikes_by_bins
         bin_centers, spike_counts, n_trials = self.aggregate_spikes_by_bins(
-            epok=epok,
+            epok=[(epok[0] - smooth_ker_size), (epok[1] + smooth_ker_size)],
             bin_size=bin_size,
             alignment_point=alignment_point,
             trial_type=trial_type,
@@ -463,7 +463,7 @@ class Cell:
         if smooth:
             firing_rate = gaussian_filter1d(firing_rate, sigma=smooth_ker_size)
         
-        return bin_centers, firing_rate, n_trials
+        return bin_centers, firing_rate[smooth_ker_size : -smooth_ker_size], n_trials
     
     def plot_histogram_by_type_direction(self, epok=[-200, 500], bin_size=1,
                                         alignment_point='go_cue', separate_ssd=False,
