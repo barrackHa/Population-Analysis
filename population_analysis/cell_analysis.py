@@ -462,7 +462,11 @@ class Cell:
         if smooth:
             firing_rate = gaussian_filter1d(firing_rate, sigma=smooth_ker_size)
         
-        return bin_centers, firing_rate[smooth_ker_size : -smooth_ker_size], n_trials
+        # remove edges affected by smoothing
+        bin_centers = bin_centers[smooth_ker_size : -smooth_ker_size]
+        firing_rate = firing_rate[smooth_ker_size : -smooth_ker_size]
+        
+        return bin_centers, firing_rate, n_trials
     
     def plot_histogram_by_type_direction(self, epok=[-200, 500], bin_size=1,
                                         alignment_point='go_cue', separate_ssd=False,
