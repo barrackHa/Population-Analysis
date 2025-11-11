@@ -869,7 +869,6 @@ class Session:
         params_left = data_left['params']
         
         # Create DataFrames for heatmaps with named axes
-        n_cells = data_left['psth_matrix'].shape[0]
         
         psth_left_df = pd.DataFrame(
             data_left['psth_matrix'],
