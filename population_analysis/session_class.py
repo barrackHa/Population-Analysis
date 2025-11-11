@@ -240,8 +240,11 @@ class Session:
             normalize_bins=normalize_bins
         )
 
-        if normalize and (not np.array_equal(firing_rate, np.zeros_like(firing_rate))):
-            firing_rate = firing_rate / np.abs(firing_rate).max() if firing_rate is not None else firing_rate
+        if ((normalize == True) or (normalize == 'by_max')):
+            if normalize and (not np.array_equal(firing_rate, np.zeros_like(firing_rate))):
+                firing_rate = firing_rate / np.abs(firing_rate).max() if firing_rate is not None else firing_rate
+        elif normalize == 'by_baseline_FR':
+            firing_rate = firing_rate - cell.baseline_FR
 
         return bin_centers, firing_rate, n_trials
     
