@@ -21,18 +21,18 @@ This project analyzes neuronal recordings from the caudate nucleus during a coun
 ### Current Scope
 - **Cell Type**: Currently analyzing Medium Spiny Neurons (MSN), but architecture is designed to generalize to other cell types
 - **Subject**: Fiona (Female Macaque, ~7-8 kg) - primary focus
-- **Screen Configuration**: `screen_rotation = 0` (standard horizontal configuration)
+- **Screen Configuration**: `screen_rotation = 0` (standard horizontal configuration). For Yasmin, in some trials `screen_rotation ≠ 0`, coordinate transformations will be needed.
 
-### Database Statistics (Fiona - Grade ≥ 8 cells only)
+### Database Statistics (Fiona - Grade <= 8 cells only)
 - **Recording period**: Multiple sessions over several months
 - **Total cell-trial combinations**: 844,694 rows
 - **Recording sessions**: 59 sessions (3 sessions excluded due to data quality issues)
-- **Quality threshold**: Grade ≥ 8 (scale 1-10, based on waveform quality and isolation)
+- **Quality threshold**: Grade <= 8 (scale 5-11, based on waveform quality and isolation) 
 
 **Excluded sessions** (Fiona):
 - `fi210628`, `fi210629`, `fi210704` - excluded due to data quality issues
 
-**Note**: The database contains cell-trial combinations, not unique trials. Each row represents one cell's activity during one trial, so multiple cells recorded simultaneously in the same trial create multiple rows.
+**Note**: The 'msn_{monkey}_cell_trial_data.pkl' database contains cell-trial combinations, not unique trials. Each row represents one cell's activity during one trial, so multiple cells recorded simultaneously in the same trial create multiple rows. The original 
 
 ### Trial Distribution & Performance
 **Trial type breakdown (all sessions)**:
@@ -226,7 +226,7 @@ Unified cell-trial database stored as pickle file: `msn_fiona_cell_trial_data.pk
 
 **Important Notes**:
 - **screen_rotation**: Currently only analyzing `screen_rotation = 0` (Fiona). Yasmin has rotated display requiring coordinate transformations.
-- **grade**: Quality metric for cell isolation. Threshold of ≥8 filters out poorly isolated units.
+- **grade**: Quality metric for cell isolation. Threshold of <= 8 filters out poorly isolated units.
 
 ---
 
