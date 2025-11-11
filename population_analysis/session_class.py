@@ -868,7 +868,6 @@ class Session:
         data_left = data['left']
         data_right = data['right']
         params_left = data_left['params']
-        cell_ids = data_left['cell_ids']
         
         # Create DataFrames for heatmaps with named axes
         n_cells = data_left['psth_matrix'].shape[0]
