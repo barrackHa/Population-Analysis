@@ -9,15 +9,33 @@ import sys
 from pathlib import Path
 
 
-def extract_session_psth_worker(session_id, pickle_path, epok, bin_size,
-                                alignment_point, smooth_ker_size, normalize,
-                                compute_average=True, ssd_number=1):
+def extract_session_psth_worker(session_id, pickle_path=None, session_df=None,
+                                epok=None, bin_size=None,
+                                alignment_point=None, smooth_ker_size=None,
+                                normalize=None, compute_average=True, ssd_number=1):
     """
     Worker function to extract PSTH matrices from a single session.
     This function must be standalone (top-level) for ProcessPoolExecutor pickling.
 
     Parameters:
     -----------
+    session_id : str
+        Session identifier
+    pickle_path : str or Path, optional
+        Path to pickle file containing full dataset. Used if session_df not provided.
+    session_df : pd.DataFrame, optional
+        Pre-loaded DataFrame for this specific session. More efficient than pickle_path.
+        If provided, takes precedence over pickle_path.
+    epok : list
+        Epoch [start, end] in ms
+    bin_size : int
+        Bin size in ms
+    alignment_point : str
+        Alignment point (e.g., 'go_cue')
+    smooth_ker_size : int
+        Smoothing kernel size in ms
+    normalize : str or bool
+        Normalization method
     compute_average : bool
         If True, compute and return average PSTH across all GO trials (left + right).
         This can be used as a baseline to subtract from condition-specific activity.
@@ -32,9 +50,17 @@ def extract_session_psth_worker(session_id, pickle_path, epok, bin_size,
     from session_class import Session
 
     try:
-        # Load only this session's data
-        cell_df = pd.read_pickle(pickle_path)
-        session_data = cell_df[cell_df['trial_session'] == session_id]
+        # Get session data - prioritize session_df for efficiency
+        if session_df is not None:
+            # Use pre-loaded session data (efficient for parallel processing)
+            session_data = session_df
+        elif pickle_path is not None:
+            # Load from pickle (backward compatibility)
+            cell_df = pd.read_pickle(pickle_path)
+            session_data = cell_df[cell_df['trial_session'] == session_id]
+            del cell_df  # Free memory immediately
+        else:
+            raise ValueError("Either pickle_path or session_df must be provided")
 
         # Create session and filter
         session = Session(session_data, verbose=False)
@@ -102,10 +128,9 @@ def extract_session_psth_worker(session_id, pickle_path, epok, bin_size,
             )
             result['avg_psth'] = avg_data['psth_matrix']
 
-        # Explicitly delete Session object to free memory
+        # Explicitly delete objects to free memory
         del session
         del session_data
-        del cell_df
         del go_data
         del stop_data
 

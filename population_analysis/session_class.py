@@ -97,7 +97,100 @@ class Session:
                 i += 1
         if (i > 0):
             print(f"Dropped {i} cell{'s' if (i > 1) else ''} with incomplete trial type or directional data.")
-    
+
+    def has_trial_types(self, required_types):
+        """
+        Check if session has all required trial types.
+
+        Parameters:
+        -----------
+        required_types : list
+            List of required trial types (e.g., ['GO', 'STOP', 'CONT'])
+
+        Returns:
+        --------
+        bool : True if all required types present
+        """
+        return set(required_types).issubset(set(self.trial_types))
+
+    def has_directions(self, required_directions):
+        """
+        Check if session has all required directions.
+
+        Parameters:
+        -----------
+        required_directions : list
+            List of required directions (e.g., [0, 180])
+
+        Returns:
+        --------
+        bool : True if all required directions present
+        """
+        # Filter out NaN values from directions
+        present_dirs = [d for d in self.directions if pd.notna(d)]
+        return set(required_directions).issubset(set(present_dirs))
+
+    def get_trial_count_for_condition(self, trial_type, direction, success_only=True):
+        """
+        Get number of trials for a specific condition.
+
+        Parameters:
+        -----------
+        trial_type : str
+            Trial type ('GO', 'STOP', 'CONT')
+        direction : int or float
+            Direction (0, 180)
+        success_only : bool
+            If True, count only successful trials
+
+        Returns:
+        --------
+        int : Number of trials matching condition
+        """
+        condition_data = self.data[
+            (self.data['type'] == trial_type) &
+            (self.data['dir'] == direction)
+        ]
+
+        if success_only:
+            condition_data = condition_data[condition_data['trial_failed'] == False]
+
+        return len(condition_data['trial_number'].unique())
+
+    def validate_min_trials_per_condition(self, trial_types, directions, min_trials, success_only=True):
+        """
+        Validate that all trial_type × direction combinations have minimum trials.
+
+        Parameters:
+        -----------
+        trial_types : list
+            List of trial types to check
+        directions : list
+            List of directions to check
+        min_trials : int
+            Minimum number of trials required per condition
+        success_only : bool
+            If True, count only successful trials
+
+        Returns:
+        --------
+        tuple : (is_valid, reason)
+            is_valid : bool
+            reason : str (empty if valid, error message if invalid)
+        """
+        for trial_type in trial_types:
+            for direction in directions:
+                n_trials = self.get_trial_count_for_condition(
+                    trial_type, direction, success_only
+                )
+
+                if n_trials < min_trials:
+                    reason = (f"Insufficient {trial_type} dir={direction} trials: "
+                             f"{n_trials} < {min_trials}")
+                    return False, reason
+
+        return True, ""
+
     def get_cell_data(self, cell_id: Union[int, str, Cell]) -> pd.DataFrame:
         """
         Get data for a specific cell in the session.
