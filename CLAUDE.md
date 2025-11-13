@@ -214,3 +214,7 @@ One of the best recording sessions for population analysis:
 **Project Lead**: Barak
 **AI Assistant**: Claude (Anthropic)
 **Repository**: Population-Analysis (pca branch)
+- to memorize that there's a local conda env you need to activate. From the root of the project run:
+  ```bash
+  conda activate $PWD/.conda
+  ```
