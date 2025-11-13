@@ -116,8 +116,8 @@ class MultiSessionPCA:
 
             # Visualization
             'figsize_3d': (12, 10),
-            'figsize_2d_grid': (16, 14),
-            'figsize_time': (16, 6),
+            'figsize_2d_grid': (7, 19),
+            'figsize_time': (10, 9),
 
             # Parallel processing
             'n_workers': max(1, mp.cpu_count() - 2)
@@ -668,7 +668,7 @@ class MultiSessionPCA:
 
         return fig, ax
 
-    def plot_2d_grid(self, save_path=None, show=True):
+    def plot_2d_grid(self, save_path=None, show=True, figsize=None):
         """
         Plot 2D PC projections in a column layout.
 
@@ -686,6 +686,9 @@ class MultiSessionPCA:
         """
         if self.go_left_PCs is None:
             raise ValueError("Data not projected. Call project_all_conditions() first.")
+        
+        if figsize is None:
+            figsize = self.config['figsize_2d_grid']
 
         def _plot_pc_projection(ax, i, j):
             """
@@ -724,7 +727,7 @@ class MultiSessionPCA:
             ax.legend()
             ax.grid(True, alpha=0.3)
 
-        fig, axes = plt.subplots(3, 1, figsize=(10, 12))
+        fig, axes = plt.subplots(3, 1, figsize=figsize)
 
         # PC1 vs PC2
         _plot_pc_projection(axes[0], 0, 1)
@@ -748,7 +751,7 @@ class MultiSessionPCA:
 
         return fig, axes
 
-    def plot_pc_timeseries(self, pcs_to_plot=[0, 1, 2], save_path=None, show=True):
+    def plot_pc_timeseries(self, pcs_to_plot=[0, 1, 2], save_path=None, show=True, figsize=None):
         """
         Plot PC time series.
 
@@ -763,6 +766,9 @@ class MultiSessionPCA:
         """
         if self.go_left_PCs is None:
             raise ValueError("Data not projected. Call project_all_conditions() first.")
+        
+        if figsize is None:
+            figsize = self.config['figsize_time']
 
         def _plot_pc_timeseries(ax, pc_idx):
             """
@@ -793,7 +799,7 @@ class MultiSessionPCA:
             ax.grid(True, alpha=0.3)
 
         n_pcs = len(pcs_to_plot)
-        fig, axes = plt.subplots(n_pcs, 1, figsize=(10, 4*n_pcs))
+        fig, axes = plt.subplots(n_pcs, 1, figsize=(figsize[0], figsize[1]*n_pcs))
 
         if n_pcs == 1:
             axes = [axes]
