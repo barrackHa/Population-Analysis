@@ -112,6 +112,31 @@ DIRECTION_COLORS = {0: '#1f77b4', 180: '#ff7f0e'}
 
 ---
 
+### Configurable Visualization Parameters
+
+```python
+# Store visualization defaults in config, allow method-level overrides
+def plot_method(self, save_path=None, show=True, figsize=None):
+    """
+    Parameters:
+    -----------
+    figsize : tuple, optional
+        Figure size (width, height). If None, uses config default.
+    """
+    if figsize is None:
+        figsize = self.config['figsize_default']
+
+    fig, ax = plt.subplots(figsize=figsize)
+    # ...
+```
+
+**Benefits**:
+- Consistent defaults across all plots
+- Easy to customize globally (change config)
+- Easy to customize per-call (pass figsize parameter)
+
+---
+
 ### Plasma Colormap Interpretation
 
 - **Yellow/Bright**: High firing rate
