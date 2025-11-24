@@ -66,6 +66,8 @@ class MultiSessionPCA:
         if config:
             self.config.update(config)
 
+        assert config['alignment_point'] in ['go_cue', 'first_relevant_saccade''go_cue', 'stop_cue'], \
+                "alignment_point must be in ['go_cue','first_relevant_saccade', 'stop_cue']"
         # Initialize data containers
         self.cell_df = None
         self.session_stats_df = None
@@ -117,7 +119,7 @@ class MultiSessionPCA:
             # Visualization
             'figsize_3d': (12, 10),
             'figsize_2d_grid': (7, 19),
-            'figsize_time': (10, 9),
+            'figsize_time': (10, 3),
 
             # Parallel processing
             'n_workers': max(1, mp.cpu_count() - 2)
@@ -603,6 +605,24 @@ class MultiSessionPCA:
         """Convenience method: fit PCA and project all conditions."""
         self.fit_pca(n_components)
         self.project_all_conditions()
+        return self
+    
+    def normalize_pcs(self):
+        """Normalize PC trajectories to unit length."""
+        if self.go_left_PCs is None:
+            raise ValueError("Data not projected. Call project_all_conditions() first.")
+
+        def _normalize(matrix):
+            norms = np.linalg.norm(matrix, axis=0, keepdims=True)
+            return matrix / norms
+
+        self.go_left_PCs = _normalize(self.go_left_PCs)
+        self.go_right_PCs = _normalize(self.go_right_PCs)
+        self.stop_left_PCs = _normalize(self.stop_left_PCs)
+        self.stop_right_PCs = _normalize(self.stop_right_PCs)
+
+        print("✓ PC trajectories normalized to unit length")
+
         return self
 
     # ========================================================================
