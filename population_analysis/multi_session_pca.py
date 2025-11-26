@@ -12,7 +12,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
-from sklearn.decomposition import PCA
+from sklearn.decomposition import PCA, TruncatedSVD
 from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -66,7 +66,7 @@ class MultiSessionPCA:
         if config:
             self.config.update(config)
 
-        assert config['alignment_point'] in ['go_cue', 'first_relevant_saccade''go_cue', 'stop_cue'], \
+        assert self.config['alignment_point'] in ['go_cue', 'first_relevant_saccade', 'go_cue', 'stop_cue'], \
                 "alignment_point must be in ['go_cue','first_relevant_saccade', 'stop_cue']"
         # Initialize data containers
         self.cell_df = None
@@ -103,6 +103,7 @@ class MultiSessionPCA:
             # PCA parameters
             'epok': [-50, 500],
             'bin_size': 1,
+            'delta': False,
             'alignment_point': 'go_cue',
             'smooth_ker_size': 25,
             'normalize': 'by_baseline_FR',
@@ -371,6 +372,7 @@ class MultiSessionPCA:
                         session_df=session_df,
                         epok=self.config['epok'],
                         bin_size=self.config['bin_size'],
+                        delta=self.config['delta'],
                         alignment_point=self.config['alignment_point'],
                         smooth_ker_size=self.config['smooth_ker_size'],
                         normalize=self.config['normalize'],
@@ -407,13 +409,26 @@ class MultiSessionPCA:
                         print(f"{counter} ✗ {session_id}: ERROR - {result['error']}")
                     else:
                         results.append(result)
-                        print(f"{counter} ✓ {session_id}: {result['n_cells']} cells")
+                        # Show if cells were dropped due to SSD filtering
+                        n_dropped = result.get('n_cells_dropped_ssd', 0)
+                        if n_dropped > 0:
+                            print(f"{counter} ✓ {session_id}: {result['n_cells']} cells (dropped {n_dropped} with no STOP ssd={self.config['ssd_number']})")
+                        else:
+                            print(f"{counter} ✓ {session_id}: {result['n_cells']} cells")
                 except Exception as e:
                     print(f"{counter} ✗ {session_id}: EXCEPTION - {str(e)}")
                     raise e
 
         print("-" * 80)
         print(f"✓ Extraction complete: {len(results)}/{len(self.valid_sessions)} successful")
+
+        # Summary of cells dropped due to SSD filtering
+        total_cells = sum(r.get('n_cells_original', r['n_cells']) for r in results)
+        total_kept = sum(r['n_cells'] for r in results)
+        total_dropped = sum(r.get('n_cells_dropped_ssd', 0) for r in results)
+        if total_dropped > 0:
+            print(f"  ⚠ SSD filtering: {total_dropped}/{total_cells} cells dropped ({100*total_dropped/total_cells:.1f}%)")
+            print(f"  Cells retained: {total_kept}")
 
         self.session_psth_data = results
         return results
@@ -468,7 +483,7 @@ class MultiSessionPCA:
 
         return self
 
-    def subtract_average(self):
+    def subtract_average_PSTH(self):
         """Subtract average PSTH from all conditions."""
         if self.combined_go_left is None:
             raise ValueError("Data not concatenated. Call concatenate_sessions() first.")
@@ -526,7 +541,7 @@ class MultiSessionPCA:
     # SECTION 5: PCA Fitting & Projection
     # ========================================================================
 
-    def fit_pca(self, n_components=None, standard_scaler=False):
+    def fit_pca(self, n_components=None, standard_scaler=False, pca_type='TruncatedSVD'):
         """
         Fit PCA on GO trial data.
 
@@ -537,6 +552,8 @@ class MultiSessionPCA:
         standard_scaler : bool, optional
             If True, apply StandardScaler before PCA (standardizes features to mean=0, std=1).
             Default: False
+        pca_type : str, optional
+            Type of PCA to use ('PCA' or 'TruncatedSVD'). Default: 'TruncatedSVD'
         """
         if n_components is None:
             n_components = self.config['n_pca_components']
@@ -555,7 +572,8 @@ class MultiSessionPCA:
         else:
             self.standard_scaler = False
 
-        self.pca = PCA(n_components=n_components)
+        pca_func = PCA if pca_type == 'PCA' else TruncatedSVD
+        self.pca = pca_func(n_components=n_components)
         self.pca.fit(mat_for_pca)
 
         print(f"✓ PCA fitted")
