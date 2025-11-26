@@ -108,7 +108,7 @@ class MultiSessionPCA:
             'smooth_ker_size': 25,
             'normalize': 'by_baseline_FR',
             'n_pca_components': 5,
-            'subtract_average': True,
+            'subtract_average_PSTH': True,
             'ssd_number': 1,
 
             # Validation criteria
@@ -353,7 +353,7 @@ class MultiSessionPCA:
             print(f"Extracting PSTHs from {len(self.valid_sessions)} sessions using {n_workers} workers...")
             print(f"  Using pickle_path (backward compatible mode)")
 
-        print(f"  Subtract average: {self.config['subtract_average']}")
+        print(f"  Subtract average: {self.config['subtract_average_PSTH']}")
         print("-" * 80)
 
         futures = {}
@@ -376,7 +376,7 @@ class MultiSessionPCA:
                         alignment_point=self.config['alignment_point'],
                         smooth_ker_size=self.config['smooth_ker_size'],
                         normalize=self.config['normalize'],
-                        compute_average=self.config['subtract_average'],
+                        compute_average=self.config['subtract_average_PSTH'],
                         ssd_number=self.config['ssd_number']
                     )
                 else:
@@ -390,7 +390,7 @@ class MultiSessionPCA:
                         alignment_point=self.config['alignment_point'],
                         smooth_ker_size=self.config['smooth_ker_size'],
                         normalize=self.config['normalize'],
-                        compute_average=self.config['subtract_average'],
+                        compute_average=self.config['subtract_average_PSTH'],
                         ssd_number=self.config['ssd_number']
                     )
                 futures[future] = session_id
@@ -488,8 +488,8 @@ class MultiSessionPCA:
         if self.combined_go_left is None:
             raise ValueError("Data not concatenated. Call concatenate_sessions() first.")
 
-        if not self.config['subtract_average']:
-            print("✓ Skipping average subtraction (subtract_average=False)")
+        if not self.config['subtract_average_PSTH']:
+            print("✓ Skipping average subtraction (subtract_average_PSTH=False)")
             return self
 
         print("Subtracting average PSTH from all conditions...")
@@ -955,7 +955,7 @@ class MultiSessionPCA:
             'alignment_point': self.config['alignment_point'],
             'smooth_ker_size': self.config['smooth_ker_size'],
             'normalize': str(self.config['normalize']),
-            'subtract_average': self.config['subtract_average'],
+            'subtract_average_PSTH': self.config['subtract_average_PSTH'],
             'ssd_number': self.config['ssd_number'],
             'n_pca_components': self.config['n_pca_components'],
             'n_sessions': len(self.valid_sessions),
@@ -988,7 +988,7 @@ class MultiSessionPCA:
         print(f"  Bin size: {self.config['bin_size']} ms")
         print(f"  Smoothing: {self.config['smooth_ker_size']} ms")
         print(f"  Normalization: {self.config['normalize']}")
-        print(f"  Subtract average: {self.config['subtract_average']}")
+        print(f"  Subtract average: {self.config['subtract_average_PSTH']}")
         print(f"  Components: {self.config['n_pca_components']}")
 
         if self.pca is not None:
