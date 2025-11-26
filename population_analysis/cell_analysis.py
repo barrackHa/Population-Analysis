@@ -111,7 +111,9 @@ class Cell:
             if alignment_point == 'go_cue':
                 return row['go_cue']
             elif alignment_point == 'stop_cue':
-                return row['stop_cue'] if not pd.isna(row['stop_cue']) else row['go_cue']
+                if pd.isna(row['stop_cue']):
+                    raise ValueError("stop_cue is NaN for this trial")
+                return row['stop_cue']
             elif alignment_point == 'first_relevant_saccade':
                 saccade = row['first_relevant_saccade']
                 if isinstance(saccade, (list, np.ndarray)) and len(saccade) > 0:
