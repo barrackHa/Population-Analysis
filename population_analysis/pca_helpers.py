@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 def extract_session_psth_worker(session_id, pickle_path=None, session_df=None,
-                                epok=None, bin_size=None,
+                                epok=None, bin_size=None, delta=True,
                                 alignment_point=None, smooth_ker_size=None,
                                 normalize=None, compute_average=True, ssd_number=1):
     """
@@ -76,7 +76,7 @@ def extract_session_psth_worker(session_id, pickle_path=None, session_df=None,
             success_only=True,
             smooth=True,
             smooth_ker_size=smooth_ker_size,
-            delta=True,
+            delta=delta,
             normalize_bins=False,
             normalize=normalize,
             sort_by_peak=False
@@ -92,23 +92,66 @@ def extract_session_psth_worker(session_id, pickle_path=None, session_df=None,
             ssd_number=ssd_number,
             smooth=True,
             smooth_ker_size=smooth_ker_size,
-            delta=True,
+            delta=delta,
             normalize_bins=False,
             normalize=normalize,
             sort_by_peak=False
         )
 
-        # Extract only what we need - PSTH matrices and cell IDs
-        result = {
-            'session_id': session_id,
-            'n_cells': n_cells,
-            'go_left': go_data['left']['psth_matrix'],
-            'go_right': go_data['right']['psth_matrix'],
-            'stop_left': stop_data['left']['psth_matrix'],
-            'stop_right': stop_data['right']['psth_matrix'],
-            'cell_ids': go_data['left']['cell_ids'],  # Same for all conditions
-            'bin_centers': go_data['left']['bin_centers']
-        }
+        # Get cell IDs from both GO and STOP extractions
+        go_cell_ids = set(go_data['left']['cell_ids'])
+        stop_cell_ids = set(stop_data['left']['cell_ids'])
+
+        # Find cells that have data for BOTH GO and STOP conditions
+        # This is critical when ssd_number is specified - some cells may have 0 STOP trials for that SSD
+        common_cells = go_cell_ids & stop_cell_ids
+        n_dropped = len(go_cell_ids) - len(common_cells)
+
+        if n_dropped > 0:
+            # Need to filter matrices to only include common cells
+            # Build index mappings
+            go_cell_to_idx = {cell: idx for idx, cell in enumerate(go_data['left']['cell_ids'])}
+            stop_cell_to_idx = {cell: idx for idx, cell in enumerate(stop_data['left']['cell_ids'])}
+
+            # Get ordered list of common cells (preserve GO order)
+            common_cells_ordered = [c for c in go_data['left']['cell_ids'] if c in common_cells]
+
+            # Filter GO matrices
+            go_indices = [go_cell_to_idx[c] for c in common_cells_ordered]
+            go_left_filtered = go_data['left']['psth_matrix'][go_indices]
+            go_right_filtered = go_data['right']['psth_matrix'][go_indices]
+
+            # Filter STOP matrices
+            stop_indices = [stop_cell_to_idx[c] for c in common_cells_ordered]
+            stop_left_filtered = stop_data['left']['psth_matrix'][stop_indices]
+            stop_right_filtered = stop_data['right']['psth_matrix'][stop_indices]
+
+            result = {
+                'session_id': session_id,
+                'n_cells': len(common_cells_ordered),
+                'n_cells_original': n_cells,
+                'n_cells_dropped_ssd': n_dropped,
+                'go_left': go_left_filtered,
+                'go_right': go_right_filtered,
+                'stop_left': stop_left_filtered,
+                'stop_right': stop_right_filtered,
+                'cell_ids': common_cells_ordered,
+                'bin_centers': go_data['left']['bin_centers']
+            }
+        else:
+            # No mismatch - use original data
+            result = {
+                'session_id': session_id,
+                'n_cells': n_cells,
+                'n_cells_original': n_cells,
+                'n_cells_dropped_ssd': 0,
+                'go_left': go_data['left']['psth_matrix'],
+                'go_right': go_data['right']['psth_matrix'],
+                'stop_left': stop_data['left']['psth_matrix'],
+                'stop_right': stop_data['right']['psth_matrix'],
+                'cell_ids': go_data['left']['cell_ids'],
+                'bin_centers': go_data['left']['bin_centers']
+            }
 
         # Compute average PSTH if requested (GO trials, both directions combined)
         if compute_average:
@@ -121,12 +164,18 @@ def extract_session_psth_worker(session_id, pickle_path=None, session_df=None,
                 success_only=True,
                 smooth=True,
                 smooth_ker_size=smooth_ker_size,
-                delta=True,
+                delta=delta,
                 normalize_bins=False,
                 normalize=normalize,
                 sort_by_peak=False
             )
-            result['avg_psth'] = avg_data['psth_matrix']
+            # Filter avg_psth to match filtered cells if needed
+            if n_dropped > 0:
+                avg_cell_to_idx = {cell: idx for idx, cell in enumerate(avg_data['cell_ids'])}
+                avg_indices = [avg_cell_to_idx[c] for c in common_cells_ordered]
+                result['avg_psth'] = avg_data['psth_matrix'][avg_indices]
+            else:
+                result['avg_psth'] = avg_data['psth_matrix']
 
         # Explicitly delete objects to free memory
         del session
