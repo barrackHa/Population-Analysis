@@ -925,49 +925,78 @@ class MultiSessionPCA:
     # SECTION 6: Visualization
     # ========================================================================
 
-    def plot_3d_trajectory(self, save_path=None, show=True):
+    def plot_3d_trajectory(self, data_split=None, save_path=None, show=True):
         """
         Plot 3D PC trajectories for GO and STOP trials.
 
         Parameters:
         -----------
+        data_split : str or None, optional
+            Which data to plot: 'train', 'test', or None (auto-detect).
+            - None (default): Use 'test' if data was split, otherwise 'train'
+            - 'test': Explicitly use test data (raises error if not available)
+            - 'train': Explicitly use train data
         save_path : str or Path, optional
             Path to save figure
         show : bool
             Display figure
         """
-        if self.go_left_PCs is None:
-            raise ValueError("Data not projected. Call project_all_conditions() first.")
+        # Auto-detect data split if not specified
+        if data_split is None:
+            data_split = 'test' if self.is_split else 'train'
+
+        # Determine which data to plot
+        if data_split == 'test':
+            if not self.is_split:
+                raise ValueError("Test data requested but data was not split. Use data_split='train' or run extract_all_sessions_parallel() with split_train_test=True.")
+
+            # Split data available, show test
+            if self.go_left_PCs_test is None:
+                raise ValueError("Test data not projected. Call project_all_conditions() first.")
+            go_left = self.go_left_PCs_test
+            go_right = self.go_right_PCs_test
+            stop_left = self.stop_left_PCs_test
+            stop_right = self.stop_right_PCs_test
+            title_suffix = " - TEST"
+        else:  # 'train'
+            if self.go_left_PCs is None:
+                raise ValueError("Data not projected. Call project_all_conditions() first.")
+
+            go_left = self.go_left_PCs
+            go_right = self.go_right_PCs
+            stop_left = self.stop_left_PCs
+            stop_right = self.stop_right_PCs
+            title_suffix = " - TRAIN" if self.is_split else ""
 
         fig = plt.figure(figsize=self.config['figsize_3d'])
         ax = fig.add_subplot(111, projection='3d')
 
         # GO trajectories
-        ax.plot(self.go_left_PCs[0, :], self.go_left_PCs[1, :], self.go_left_PCs[2, :],
+        ax.plot(go_left[0, :], go_left[1, :], go_left[2, :],
                 color='blue', linewidth=2, label='GO Left (180°)', alpha=0.8)
-        ax.plot(self.go_right_PCs[0, :], self.go_right_PCs[1, :], self.go_right_PCs[2, :],
+        ax.plot(go_right[0, :], go_right[1, :], go_right[2, :],
                 color='green', linewidth=2, label='GO Right (0°)', alpha=0.8)
 
         # STOP trajectories
-        ax.plot(self.stop_left_PCs[0, :], self.stop_left_PCs[1, :], self.stop_left_PCs[2, :],
+        ax.plot(stop_left[0, :], stop_left[1, :], stop_left[2, :],
                 color='red', linewidth=2, label='STOP Left (180°)', linestyle='dashed', alpha=0.8)
-        ax.plot(self.stop_right_PCs[0, :], self.stop_right_PCs[1, :], self.stop_right_PCs[2, :],
+        ax.plot(stop_right[0, :], stop_right[1, :], stop_right[2, :],
                 color='orange', linewidth=2, label='STOP Right (0°)', linestyle='dashed', alpha=0.8)
 
         # Start markers
-        ax.scatter(self.go_left_PCs[0, 0], self.go_left_PCs[1, 0], self.go_left_PCs[2, 0],
+        ax.scatter(go_left[0, 0], go_left[1, 0], go_left[2, 0],
                   marker='^', s=200, color='blue', edgecolors='black', linewidths=2, zorder=5)
-        ax.scatter(self.go_right_PCs[0, 0], self.go_right_PCs[1, 0], self.go_right_PCs[2, 0],
+        ax.scatter(go_right[0, 0], go_right[1, 0], go_right[2, 0],
                   marker='^', s=200, color='green', edgecolors='black', linewidths=2, zorder=5)
-        ax.scatter(self.stop_left_PCs[0, 0], self.stop_left_PCs[1, 0], self.stop_left_PCs[2, 0],
+        ax.scatter(stop_left[0, 0], stop_left[1, 0], stop_left[2, 0],
                   marker='*', s=200, color='red', edgecolors='black', linewidths=2, zorder=5)
-        ax.scatter(self.stop_right_PCs[0, 0], self.stop_right_PCs[1, 0], self.stop_right_PCs[2, 0],
+        ax.scatter(stop_right[0, 0], stop_right[1, 0], stop_right[2, 0],
                   marker='*', s=200, color='orange', edgecolors='black', linewidths=2, zorder=5)
 
         ax.set_xlabel('PC1', fontsize=14)
         ax.set_ylabel('PC2', fontsize=14)
         ax.set_zlabel('PC3', fontsize=14)
-        ax.set_title(f'3D PC Trajectories (n={len(self.valid_sessions)} sessions, {self.n_cells} cells)',
+        ax.set_title(f'3D PC Trajectories{title_suffix} (n={len(self.valid_sessions)} sessions, {self.n_cells} cells)',
                     fontsize=16)
         ax.legend(fontsize=10, loc='upper left')
 
@@ -984,7 +1013,7 @@ class MultiSessionPCA:
 
         return fig, ax
 
-    def plot_2d_grid(self, save_path=None, show=True, figsize=None):
+    def plot_2d_grid(self, data_split=None, save_path=None, show=True, figsize=None):
         """
         Plot 2D PC projections in a column layout.
 
@@ -995,18 +1024,49 @@ class MultiSessionPCA:
 
         Parameters:
         -----------
+        data_split : str or None, optional
+            Which data to plot: 'train', 'test', or None (auto-detect).
+            - None (default): Use 'test' if data was split, otherwise 'train'
+            - 'test': Explicitly use test data (raises error if not available)
+            - 'train': Explicitly use train data
         save_path : str or Path, optional
             Path to save figure
         show : bool
             Display figure
+        figsize : tuple, optional
+            Figure size (width, height)
         """
-        if self.go_left_PCs is None:
-            raise ValueError("Data not projected. Call project_all_conditions() first.")
-        
+        # Auto-detect data split if not specified
+        if data_split is None:
+            data_split = 'test' if self.is_split else 'train'
+
+        # Determine which data to plot
+        if data_split == 'test':
+            if not self.is_split:
+                raise ValueError("Test data requested but data was not split. Use data_split='train' or run extract_all_sessions_parallel() with split_train_test=True.")
+
+            # Split data available, show test
+            if self.go_left_PCs_test is None:
+                raise ValueError("Test data not projected. Call project_all_conditions() first.")
+            go_left = self.go_left_PCs_test
+            go_right = self.go_right_PCs_test
+            stop_left = self.stop_left_PCs_test
+            stop_right = self.stop_right_PCs_test
+            title_suffix = " - TEST"
+        else:  # 'train'
+            if self.go_left_PCs is None:
+                raise ValueError("Data not projected. Call project_all_conditions() first.")
+
+            go_left = self.go_left_PCs
+            go_right = self.go_right_PCs
+            stop_left = self.stop_left_PCs
+            stop_right = self.stop_right_PCs
+            title_suffix = " - TRAIN" if self.is_split else ""
+
         if figsize is None:
             figsize = self.config['figsize_2d_grid']
 
-        def _plot_pc_projection(ax, i, j):
+        def _plot_pc_projection(ax, i, j, go_left, go_right, stop_left, stop_right, title_suffix=""):
             """
             Helper function to plot PCi vs PCj trajectories.
 
@@ -1018,41 +1078,45 @@ class MultiSessionPCA:
                 PC index for x-axis (0-indexed)
             j : int
                 PC index for y-axis (0-indexed)
+            go_left, go_right, stop_left, stop_right : arrays
+                PC projection data
+            title_suffix : str
+                Suffix to add to title (e.g., " - TEST" or " - TRAIN")
             """
             # Plot trajectories
-            ax.plot(self.go_left_PCs[i, :], self.go_left_PCs[j, :], 'b-', lw=2, label='GO Left')
-            ax.plot(self.go_right_PCs[i, :], self.go_right_PCs[j, :], 'g-', lw=2, label='GO Right')
-            ax.plot(self.stop_left_PCs[i, :], self.stop_left_PCs[j, :], 'r--', lw=2, label='STOP Left')
-            ax.plot(self.stop_right_PCs[i, :], self.stop_right_PCs[j, :], linestyle='--',
+            ax.plot(go_left[i, :], go_left[j, :], 'b-', lw=2, label='GO Left')
+            ax.plot(go_right[i, :], go_right[j, :], 'g-', lw=2, label='GO Right')
+            ax.plot(stop_left[i, :], stop_left[j, :], 'r--', lw=2, label='STOP Left')
+            ax.plot(stop_right[i, :], stop_right[j, :], linestyle='--',
                     color='orange', lw=2, label='STOP Right')
 
             # GO start markers
-            ax.scatter([self.go_left_PCs[i, 0], self.go_right_PCs[i, 0]],
-                      [self.go_left_PCs[j, 0], self.go_right_PCs[j, 0]],
+            ax.scatter([go_left[i, 0], go_right[i, 0]],
+                      [go_left[j, 0], go_right[j, 0]],
                       marker='^', s=150, c=['blue', 'green'], edgecolors='black', lw=2, zorder=5)
 
             # STOP start markers
-            ax.scatter([self.stop_left_PCs[i, 0], self.stop_right_PCs[i, 0]],
-                      [self.stop_left_PCs[j, 0], self.stop_right_PCs[j, 0]],
+            ax.scatter([stop_left[i, 0], stop_right[i, 0]],
+                      [stop_left[j, 0], stop_right[j, 0]],
                       marker='*', s=200, c=['red', 'orange'], edgecolors='black', lw=2, zorder=5)
 
             # Labels and formatting
             ax.set_xlabel(f'PC{i+1}')
             ax.set_ylabel(f'PC{j+1}')
-            ax.set_title(f'PC{i+1} vs PC{j+1}')
+            ax.set_title(f'PC{i+1} vs PC{j+1}{title_suffix}')
             ax.legend()
             ax.grid(True, alpha=0.3)
 
         fig, axes = plt.subplots(3, 1, figsize=figsize)
 
         # PC1 vs PC2
-        _plot_pc_projection(axes[0], 0, 1)
+        _plot_pc_projection(axes[0], 0, 1, go_left, go_right, stop_left, stop_right, title_suffix)
 
         # PC2 vs PC3
-        _plot_pc_projection(axes[1], 1, 2)
+        _plot_pc_projection(axes[1], 1, 2, go_left, go_right, stop_left, stop_right, title_suffix)
 
         # PC3 vs PC1
-        _plot_pc_projection(axes[2], 2, 0)
+        _plot_pc_projection(axes[2], 2, 0, go_left, go_right, stop_left, stop_right, title_suffix)
 
         plt.tight_layout()
 
@@ -1067,7 +1131,7 @@ class MultiSessionPCA:
 
         return fig, axes
 
-    def plot_pc_timeseries(self, pcs_to_plot=[0, 1, 2], save_path=None, show=True, figsize=None):
+    def plot_pc_timeseries(self, pcs_to_plot=[0, 1, 2], data_split=None, save_path=None, show=True, figsize=None):
         """
         Plot PC time series.
 
@@ -1075,18 +1139,49 @@ class MultiSessionPCA:
         -----------
         pcs_to_plot : list
             List of PC indices to plot (0-indexed). Default: [0, 1, 2] (PC1, PC2, PC3)
+        data_split : str or None, optional
+            Which data to plot: 'train', 'test', or None (auto-detect).
+            - None (default): Use 'test' if data was split, otherwise 'train'
+            - 'test': Explicitly use test data (raises error if not available)
+            - 'train': Explicitly use train data
         save_path : str or Path, optional
             Path to save figure
         show : bool
             Display figure
+        figsize : tuple, optional
+            Figure size (width, height)
         """
-        if self.go_left_PCs is None:
-            raise ValueError("Data not projected. Call project_all_conditions() first.")
-        
+        # Auto-detect data split if not specified
+        if data_split is None:
+            data_split = 'test' if self.is_split else 'train'
+
+        # Determine which data to plot
+        if data_split == 'test':
+            if not self.is_split:
+                raise ValueError("Test data requested but data was not split. Use data_split='train' or run extract_all_sessions_parallel() with split_train_test=True.")
+
+            # Split data available, show test
+            if self.go_left_PCs_test is None:
+                raise ValueError("Test data not projected. Call project_all_conditions() first.")
+            go_left = self.go_left_PCs_test
+            go_right = self.go_right_PCs_test
+            stop_left = self.stop_left_PCs_test
+            stop_right = self.stop_right_PCs_test
+            title_suffix = " - TEST"
+        else:  # 'train'
+            if self.go_left_PCs is None:
+                raise ValueError("Data not projected. Call project_all_conditions() first.")
+
+            go_left = self.go_left_PCs
+            go_right = self.go_right_PCs
+            stop_left = self.stop_left_PCs
+            stop_right = self.stop_right_PCs
+            title_suffix = " - TRAIN" if self.is_split else ""
+
         if figsize is None:
             figsize = self.config['figsize_time']
 
-        def _plot_pc_timeseries(ax, pc_idx):
+        def _plot_pc_timeseries(ax, pc_idx, time, go_left, go_right, stop_left, stop_right, title_suffix=""):
             """
             Helper function to plot PC timeseries for a single PC.
 
@@ -1096,12 +1191,18 @@ class MultiSessionPCA:
                 Axis to plot on
             pc_idx : int
                 PC index (0-indexed)
+            time : array
+                Time vector
+            go_left, go_right, stop_left, stop_right : arrays
+                PC projection data
+            title_suffix : str
+                Suffix to add to title (e.g., " - TEST" or " - TRAIN")
             """
             # Plot trajectories over time
-            ax.plot(self.time, self.go_left_PCs[pc_idx, :], 'b-', lw=2, label='GO Left')
-            ax.plot(self.time, self.go_right_PCs[pc_idx, :], 'g-', lw=2, label='GO Right')
-            ax.plot(self.time, self.stop_left_PCs[pc_idx, :], 'r--', lw=2, label='STOP Left')
-            ax.plot(self.time, self.stop_right_PCs[pc_idx, :], linestyle='--',
+            ax.plot(time, go_left[pc_idx, :], 'b-', lw=2, label='GO Left')
+            ax.plot(time, go_right[pc_idx, :], 'g-', lw=2, label='GO Right')
+            ax.plot(time, stop_left[pc_idx, :], 'r--', lw=2, label='STOP Left')
+            ax.plot(time, stop_right[pc_idx, :], linestyle='--',
                    color='orange', lw=2, label='STOP Right')
 
             # Mark t=0 (alignment point)
@@ -1110,7 +1211,7 @@ class MultiSessionPCA:
             # Labels and formatting
             ax.set_xlabel('Time (ms)')
             ax.set_ylabel(f'PC{pc_idx+1}')
-            ax.set_title(f'PC{pc_idx+1} over Time')
+            ax.set_title(f'PC{pc_idx+1} over Time{title_suffix}')
             ax.legend()
             ax.grid(True, alpha=0.3)
 
@@ -1122,7 +1223,7 @@ class MultiSessionPCA:
 
         # Plot each PC timeseries
         for i, pc_idx in enumerate(pcs_to_plot):
-            _plot_pc_timeseries(axes[i], pc_idx)
+            _plot_pc_timeseries(axes[i], pc_idx, self.time, go_left, go_right, stop_left, stop_right, title_suffix)
 
         plt.tight_layout()
 
