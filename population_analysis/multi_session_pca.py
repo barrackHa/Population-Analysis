@@ -516,7 +516,7 @@ class MultiSessionPCA:
 
         return self
 
-    def prepare_pca_matrix(self):
+    def prepare_pca_matrix(self, subtract_average=False):
         """Create combined matrix for PCA (GO left + GO right)."""
         if self.combined_go_left is None:
             raise ValueError("Data not prepared. Call concatenate_sessions() first.")
@@ -535,13 +535,17 @@ class MultiSessionPCA:
         if np.isinf(combined_psth_matrix).any():
             print("  WARNING: Matrix contains Inf values!")
 
+        if subtract_average:
+            mean_trace = combined_psth_matrix.mean(axis=0, keepdims=True)
+            combined_psth_matrix = combined_psth_matrix - mean_trace
+
         return combined_psth_matrix
 
     # ========================================================================
     # SECTION 5: PCA Fitting & Projection
     # ========================================================================
 
-    def fit_pca(self, n_components=None, standard_scaler=False, pca_type='TruncatedSVD'):
+    def fit_pca(self, n_components=None, standard_scaler=False, pca_type='TruncatedSVD', subtract_average=False):
         """
         Fit PCA on GO trial data.
 
@@ -554,11 +558,13 @@ class MultiSessionPCA:
             Default: False
         pca_type : str, optional
             Type of PCA to use ('PCA' or 'TruncatedSVD'). Default: 'TruncatedSVD'
+        subtract_average : bool, optional
+            If True, subtract average of each line in the PCA matrix (including leaft and right).
         """
         if n_components is None:
             n_components = self.config['n_pca_components']
 
-        combined_psth_matrix = self.prepare_pca_matrix()
+        combined_psth_matrix = self.prepare_pca_matrix(subtract_average=subtract_average)
 
         print(f"Fitting PCA with {n_components} components...")
         mat_for_pca = combined_psth_matrix.T
