@@ -77,6 +77,9 @@ class MultiSessionPCA:
         self.pca = None
         self.standard_scaler = False  # Flag: whether StandardScaler was used
 
+        # Train/test split flag
+        self.is_split = False
+
         # PC projections (set after fitting)
         self.go_left_PCs = None
         self.go_right_PCs = None
@@ -90,6 +93,25 @@ class MultiSessionPCA:
         self.combined_stop_left = None
         self.combined_stop_right = None
         self.combined_avg_psth = None
+
+        # Train/test combined matrices (populated if split)
+        self.combined_go_left_train = None
+        self.combined_go_right_train = None
+        self.combined_stop_left_train = None
+        self.combined_stop_right_train = None
+        self.combined_avg_psth_train = None
+
+        self.combined_go_left_test = None
+        self.combined_go_right_test = None
+        self.combined_stop_left_test = None
+        self.combined_stop_right_test = None
+        self.combined_avg_psth_test = None
+
+        # Test PC projections (populated if split)
+        self.go_left_PCs_test = None
+        self.go_right_PCs_test = None
+        self.stop_left_PCs_test = None
+        self.stop_right_PCs_test = None
 
         # Cell-to-session mapping
         self.cell_session_df = None
@@ -312,7 +334,8 @@ class MultiSessionPCA:
     # SECTION 3: PSTH Extraction
     # ========================================================================
 
-    def extract_all_sessions_parallel(self, use_preloaded_data=True, pickle_path=None, n_workers=None):
+    def extract_all_sessions_parallel(self, use_preloaded_data=True, pickle_path=None, n_workers=None,
+                                       split_train_test=False, test_fraction=0.5, random_state=None):
         """
         Extract PSTH matrices from all valid sessions using parallel processing.
 
@@ -325,6 +348,13 @@ class MultiSessionPCA:
             Path to pickle file. Only used if use_preloaded_data=False.
         n_workers : int, optional
             Number of parallel workers (uses config default if not specified)
+        split_train_test : bool, optional
+            If True, split each session's trials into train and test sets.
+            Default: False
+        test_fraction : float, optional
+            Fraction of trials to use for testing (0.0 to 1.0). Default: 0.5
+        random_state : int, optional
+            Random seed for reproducible train/test splits. Default: None
 
         Returns:
         --------
@@ -336,6 +366,9 @@ class MultiSessionPCA:
 
         if n_workers is None:
             n_workers = self.config['n_workers']
+
+        # Set split flag
+        self.is_split = split_train_test
 
         # Determine data passing strategy
         if use_preloaded_data:
@@ -353,6 +386,9 @@ class MultiSessionPCA:
             print(f"Extracting PSTHs from {len(self.valid_sessions)} sessions using {n_workers} workers...")
             print(f"  Using pickle_path (backward compatible mode)")
 
+        if split_train_test:
+            print(f"  Train/test split: {int((1-test_fraction)*100)}% train / {int(test_fraction*100)}% test")
+            print(f"  Random state: {random_state}")
         print(f"  Subtract average: {self.config['subtract_average_PSTH']}")
         print("-" * 80)
 
@@ -377,7 +413,10 @@ class MultiSessionPCA:
                         smooth_ker_size=self.config['smooth_ker_size'],
                         normalize=self.config['normalize'],
                         compute_average=self.config['subtract_average_PSTH'],
-                        ssd_number=self.config['ssd_number']
+                        ssd_number=self.config['ssd_number'],
+                        split_train_test=split_train_test,
+                        test_fraction=test_fraction,
+                        random_state=random_state
                     )
                 else:
                     # Pass pickle path (backward compatible)
@@ -391,7 +430,10 @@ class MultiSessionPCA:
                         smooth_ker_size=self.config['smooth_ker_size'],
                         normalize=self.config['normalize'],
                         compute_average=self.config['subtract_average_PSTH'],
-                        ssd_number=self.config['ssd_number']
+                        ssd_number=self.config['ssd_number'],
+                        split_train_test=split_train_test,
+                        test_fraction=test_fraction,
+                        random_state=random_state
                     )
                 futures[future] = session_id
 
@@ -409,12 +451,34 @@ class MultiSessionPCA:
                         print(f"{counter} ✗ {session_id}: ERROR - {result['error']}")
                     else:
                         results.append(result)
-                        # Show if cells were dropped due to SSD filtering
-                        n_dropped = result.get('n_cells_dropped_ssd', 0)
-                        if n_dropped > 0:
-                            print(f"{counter} ✓ {session_id}: {result['n_cells']} cells (dropped {n_dropped} with no STOP ssd={self.config['ssd_number']})")
+
+                        # Handle split mode results
+                        if result.get('split_mode', False):
+                            train_n_cells = result['train']['n_cells']
+                            test_n_cells = result['test']['n_cells']
+                            train_dropped = result['train'].get('n_cells_dropped_ssd', 0)
+                            test_dropped = result['test'].get('n_cells_dropped_ssd', 0)
+                            alignment_dropped = result.get('n_cells_dropped_for_alignment', 0)
+
+                            # Build message
+                            drops_info = []
+                            if train_dropped > 0 or test_dropped > 0:
+                                drops_info.append(f"SSD: train={train_dropped}, test={test_dropped}")
+                            if alignment_dropped > 0:
+                                drops_info.append(f"alignment={alignment_dropped}")
+
+                            if drops_info:
+                                drops_str = ", ".join(drops_info)
+                                print(f"{counter} ✓ {session_id}: {train_n_cells} cells (dropped: {drops_str})")
+                            else:
+                                print(f"{counter} ✓ {session_id}: {train_n_cells} cells (train/test split)")
                         else:
-                            print(f"{counter} ✓ {session_id}: {result['n_cells']} cells")
+                            # Original behavior
+                            n_dropped = result.get('n_cells_dropped_ssd', 0)
+                            if n_dropped > 0:
+                                print(f"{counter} ✓ {session_id}: {result['n_cells']} cells (dropped {n_dropped} with no STOP ssd={self.config['ssd_number']})")
+                            else:
+                                print(f"{counter} ✓ {session_id}: {result['n_cells']} cells")
                 except Exception as e:
                     print(f"{counter} ✗ {session_id}: EXCEPTION - {str(e)}")
                     raise e
@@ -423,12 +487,30 @@ class MultiSessionPCA:
         print(f"✓ Extraction complete: {len(results)}/{len(self.valid_sessions)} successful")
 
         # Summary of cells dropped due to SSD filtering
-        total_cells = sum(r.get('n_cells_original', r['n_cells']) for r in results)
-        total_kept = sum(r['n_cells'] for r in results)
-        total_dropped = sum(r.get('n_cells_dropped_ssd', 0) for r in results)
-        if total_dropped > 0:
-            print(f"  ⚠ SSD filtering: {total_dropped}/{total_cells} cells dropped ({100*total_dropped/total_cells:.1f}%)")
-            print(f"  Cells retained: {total_kept}")
+        if split_train_test:
+            # Split mode: check both train and test
+            total_cells = sum(r.get('n_cells_original', r['train']['n_cells']) for r in results)
+            total_train_kept = sum(r['train']['n_cells'] for r in results)
+            total_test_kept = sum(r['test']['n_cells'] for r in results)
+            total_train_dropped = sum(r['train'].get('n_cells_dropped_ssd', 0) for r in results)
+            total_test_dropped = sum(r['test'].get('n_cells_dropped_ssd', 0) for r in results)
+            total_alignment_dropped = sum(r.get('n_cells_dropped_for_alignment', 0) for r in results)
+
+            if total_train_dropped > 0 or total_test_dropped > 0 or total_alignment_dropped > 0:
+                print(f"  ⚠ Cell filtering:")
+                if total_train_dropped > 0 or total_test_dropped > 0:
+                    print(f"    SSD filtering - Train: {total_train_dropped}, Test: {total_test_dropped}")
+                if total_alignment_dropped > 0:
+                    print(f"    Train/test alignment: {total_alignment_dropped} cells dropped ({100*total_alignment_dropped/total_cells:.1f}%)")
+                print(f"  Cells retained: Train={total_train_kept}, Test={total_test_kept}")
+        else:
+            # Original behavior
+            total_cells = sum(r.get('n_cells_original', r['n_cells']) for r in results)
+            total_kept = sum(r['n_cells'] for r in results)
+            total_dropped = sum(r.get('n_cells_dropped_ssd', 0) for r in results)
+            if total_dropped > 0:
+                print(f"  ⚠ SSD filtering: {total_dropped}/{total_cells} cells dropped ({100*total_dropped/total_cells:.1f}%)")
+                print(f"  Cells retained: {total_kept}")
 
         self.session_psth_data = results
         return results
@@ -444,49 +526,116 @@ class MultiSessionPCA:
 
         print("Concatenating PSTH matrices across sessions...")
 
-        go_left_matrices = []
-        go_right_matrices = []
-        stop_left_matrices = []
-        stop_right_matrices = []
-        cell_session_mapping = []
+        if self.is_split:
+            # Split mode: concatenate train and test separately
+            go_left_train = []
+            go_right_train = []
+            stop_left_train = []
+            stop_right_train = []
 
-        for session_data in self.session_psth_data:
-            session_id = session_data['session_id']
+            go_left_test = []
+            go_right_test = []
+            stop_left_test = []
+            stop_right_test = []
 
-            # Append matrices
-            go_left_matrices.append(session_data['go_left'])
-            go_right_matrices.append(session_data['go_right'])
-            stop_left_matrices.append(session_data['stop_left'])
-            stop_right_matrices.append(session_data['stop_right'])
+            cell_session_mapping = []
 
-            # Track cell-to-session mapping
-            for cell_id in session_data['cell_ids']:
-                cell_session_mapping.append({
-                    'cell_id': cell_id,
-                    'session_id': session_id
-                })
+            for session_data in self.session_psth_data:
+                session_id = session_data['session_id']
 
-        # Concatenate along cell dimension
-        self.combined_go_left = np.concatenate(go_left_matrices, axis=0)
-        self.combined_go_right = np.concatenate(go_right_matrices, axis=0)
-        self.combined_stop_left = np.concatenate(stop_left_matrices, axis=0)
-        self.combined_stop_right = np.concatenate(stop_right_matrices, axis=0)
-        self.time = self.session_psth_data[0]['bin_centers']
+                # Append train matrices
+                go_left_train.append(session_data['train']['go_left'])
+                go_right_train.append(session_data['train']['go_right'])
+                stop_left_train.append(session_data['train']['stop_left'])
+                stop_right_train.append(session_data['train']['stop_right'])
 
-        self.cell_session_df = pd.DataFrame(cell_session_mapping)
+                # Append test matrices
+                go_left_test.append(session_data['test']['go_left'])
+                go_right_test.append(session_data['test']['go_right'])
+                stop_left_test.append(session_data['test']['stop_left'])
+                stop_right_test.append(session_data['test']['stop_right'])
 
-        print(f"✓ Concatenation complete:")
-        print(f"  GO Left: {self.combined_go_left.shape}")
-        print(f"  GO Right: {self.combined_go_right.shape}")
-        print(f"  STOP Left: {self.combined_stop_left.shape}")
-        print(f"  STOP Right: {self.combined_stop_right.shape}")
+                # Track cell-to-session mapping (train and test have same cells)
+                for cell_id in session_data['train']['cell_ids']:
+                    cell_session_mapping.append({
+                        'cell_id': cell_id,
+                        'session_id': session_id
+                    })
+
+            # Concatenate along cell dimension - train
+            self.combined_go_left_train = np.concatenate(go_left_train, axis=0)
+            self.combined_go_right_train = np.concatenate(go_right_train, axis=0)
+            self.combined_stop_left_train = np.concatenate(stop_left_train, axis=0)
+            self.combined_stop_right_train = np.concatenate(stop_right_train, axis=0)
+
+            # Concatenate along cell dimension - test
+            self.combined_go_left_test = np.concatenate(go_left_test, axis=0)
+            self.combined_go_right_test = np.concatenate(go_right_test, axis=0)
+            self.combined_stop_left_test = np.concatenate(stop_left_test, axis=0)
+            self.combined_stop_right_test = np.concatenate(stop_right_test, axis=0)
+
+            self.time = self.session_psth_data[0]['train']['bin_centers']
+            self.cell_session_df = pd.DataFrame(cell_session_mapping)
+
+            print(f"✓ Concatenation complete (train/test split):")
+            print(f"  Train - GO Left: {self.combined_go_left_train.shape}")
+            print(f"  Train - GO Right: {self.combined_go_right_train.shape}")
+            print(f"  Train - STOP Left: {self.combined_stop_left_train.shape}")
+            print(f"  Train - STOP Right: {self.combined_stop_right_train.shape}")
+            print(f"  Test  - GO Left: {self.combined_go_left_test.shape}")
+            print(f"  Test  - GO Right: {self.combined_go_right_test.shape}")
+            print(f"  Test  - STOP Left: {self.combined_stop_left_test.shape}")
+            print(f"  Test  - STOP Right: {self.combined_stop_right_test.shape}")
+
+        else:
+            # Original behavior: no split
+            go_left_matrices = []
+            go_right_matrices = []
+            stop_left_matrices = []
+            stop_right_matrices = []
+            cell_session_mapping = []
+
+            for session_data in self.session_psth_data:
+                session_id = session_data['session_id']
+
+                # Append matrices
+                go_left_matrices.append(session_data['go_left'])
+                go_right_matrices.append(session_data['go_right'])
+                stop_left_matrices.append(session_data['stop_left'])
+                stop_right_matrices.append(session_data['stop_right'])
+
+                # Track cell-to-session mapping
+                for cell_id in session_data['cell_ids']:
+                    cell_session_mapping.append({
+                        'cell_id': cell_id,
+                        'session_id': session_id
+                    })
+
+            # Concatenate along cell dimension
+            self.combined_go_left = np.concatenate(go_left_matrices, axis=0)
+            self.combined_go_right = np.concatenate(go_right_matrices, axis=0)
+            self.combined_stop_left = np.concatenate(stop_left_matrices, axis=0)
+            self.combined_stop_right = np.concatenate(stop_right_matrices, axis=0)
+            self.time = self.session_psth_data[0]['bin_centers']
+
+            self.cell_session_df = pd.DataFrame(cell_session_mapping)
+
+            print(f"✓ Concatenation complete:")
+            print(f"  GO Left: {self.combined_go_left.shape}")
+            print(f"  GO Right: {self.combined_go_right.shape}")
+            print(f"  STOP Left: {self.combined_stop_left.shape}")
+            print(f"  STOP Right: {self.combined_stop_right.shape}")
 
         return self
 
     def subtract_average_PSTH(self):
         """Subtract average PSTH from all conditions."""
-        if self.combined_go_left is None:
-            raise ValueError("Data not concatenated. Call concatenate_sessions() first.")
+        if self.is_split:
+            if self.combined_go_left_train is None:
+                raise ValueError("Data not concatenated. Call concatenate_sessions() first.")
+        else:
+            if self.combined_go_left is None:
+                raise ValueError("Data not concatenated. Call concatenate_sessions() first.")
 
         if not self.config['subtract_average_PSTH']:
             print("✓ Skipping average subtraction (subtract_average_PSTH=False)")
@@ -494,39 +643,111 @@ class MultiSessionPCA:
 
         print("Subtracting average PSTH from all conditions...")
 
-        # Collect average PSTH from all sessions
-        avg_psth_matrices = []
-        for session_data in self.session_psth_data:
-            if 'avg_psth' not in session_data:
-                raise ValueError(f"Session {session_data['session_id']} missing avg_psth")
-            avg_psth_matrices.append(session_data['avg_psth'])
+        if self.is_split:
+            # Split mode: handle train and test separately
+            avg_psth_train = []
+            avg_psth_test = []
 
-        self.combined_avg_psth = np.concatenate(avg_psth_matrices, axis=0)
+            for session_data in self.session_psth_data:
+                if 'avg_psth' not in session_data['train']:
+                    raise ValueError(f"Session {session_data['session_id']} train missing avg_psth")
+                if 'avg_psth' not in session_data['test']:
+                    raise ValueError(f"Session {session_data['session_id']} test missing avg_psth")
 
-        print(f"  Average PSTH shape: {self.combined_avg_psth.shape}")
-        print(f"  Mean: {self.combined_avg_psth.mean():.4f}, Std: {self.combined_avg_psth.std():.4f}")
+                avg_psth_train.append(session_data['train']['avg_psth'])
+                avg_psth_test.append(session_data['test']['avg_psth'])
 
-        # Subtract from all conditions
-        self.combined_go_left = self.combined_go_left - self.combined_avg_psth
-        self.combined_go_right = self.combined_go_right - self.combined_avg_psth
-        self.combined_stop_left = self.combined_stop_left - self.combined_avg_psth
-        self.combined_stop_right = self.combined_stop_right - self.combined_avg_psth
+            self.combined_avg_psth_train = np.concatenate(avg_psth_train, axis=0)
+            self.combined_avg_psth_test = np.concatenate(avg_psth_test, axis=0)
 
-        print("✓ Average PSTH subtracted")
+            print(f"  Train - Average PSTH shape: {self.combined_avg_psth_train.shape}")
+            print(f"  Train - Mean: {self.combined_avg_psth_train.mean():.4f}, Std: {self.combined_avg_psth_train.std():.4f}")
+            print(f"  Test  - Average PSTH shape: {self.combined_avg_psth_test.shape}")
+            print(f"  Test  - Mean: {self.combined_avg_psth_test.mean():.4f}, Std: {self.combined_avg_psth_test.std():.4f}")
+
+            # Subtract from train conditions
+            self.combined_go_left_train = self.combined_go_left_train - self.combined_avg_psth_train
+            self.combined_go_right_train = self.combined_go_right_train - self.combined_avg_psth_train
+            self.combined_stop_left_train = self.combined_stop_left_train - self.combined_avg_psth_train
+            self.combined_stop_right_train = self.combined_stop_right_train - self.combined_avg_psth_train
+
+            # Subtract from test conditions
+            self.combined_go_left_test = self.combined_go_left_test - self.combined_avg_psth_test
+            self.combined_go_right_test = self.combined_go_right_test - self.combined_avg_psth_test
+            self.combined_stop_left_test = self.combined_stop_left_test - self.combined_avg_psth_test
+            self.combined_stop_right_test = self.combined_stop_right_test - self.combined_avg_psth_test
+
+            print("✓ Average PSTH subtracted (train and test)")
+
+        else:
+            # Original behavior
+            avg_psth_matrices = []
+            for session_data in self.session_psth_data:
+                if 'avg_psth' not in session_data:
+                    raise ValueError(f"Session {session_data['session_id']} missing avg_psth")
+                avg_psth_matrices.append(session_data['avg_psth'])
+
+            self.combined_avg_psth = np.concatenate(avg_psth_matrices, axis=0)
+
+            print(f"  Average PSTH shape: {self.combined_avg_psth.shape}")
+            print(f"  Mean: {self.combined_avg_psth.mean():.4f}, Std: {self.combined_avg_psth.std():.4f}")
+
+            # Subtract from all conditions
+            self.combined_go_left = self.combined_go_left - self.combined_avg_psth
+            self.combined_go_right = self.combined_go_right - self.combined_avg_psth
+            self.combined_stop_left = self.combined_stop_left - self.combined_avg_psth
+            self.combined_stop_right = self.combined_stop_right - self.combined_avg_psth
+
+            print("✓ Average PSTH subtracted")
 
         return self
 
-    def prepare_pca_matrix(self, subtract_average=False):
-        """Create combined matrix for PCA (GO left + GO right)."""
-        if self.combined_go_left is None:
-            raise ValueError("Data not prepared. Call concatenate_sessions() first.")
+    def prepare_pca_matrix(self, subtract_average=False, use_train_only=True):
+        """
+        Create combined matrix for PCA (GO left + GO right).
 
-        combined_psth_matrix = np.concatenate(
-            [self.combined_go_left, self.combined_go_right],
-            axis=1
-        )
+        Parameters:
+        -----------
+        subtract_average : bool
+            If True, subtract the mean trace from the matrix
+        use_train_only : bool
+            If True and data is split, use only train data. Otherwise use all data.
+        """
+        if self.is_split:
+            if use_train_only:
+                # Use train data only
+                if self.combined_go_left_train is None:
+                    raise ValueError("Train data not prepared. Call concatenate_sessions() first.")
 
-        print(f"✓ PCA matrix prepared: {combined_psth_matrix.shape}")
+                combined_psth_matrix = np.concatenate(
+                    [self.combined_go_left_train, self.combined_go_right_train],
+                    axis=1
+                )
+
+                print(f"✓ PCA matrix prepared (TRAIN only): {combined_psth_matrix.shape}")
+            else:
+                # Use test data
+                if self.combined_go_left_test is None:
+                    raise ValueError("Test data not prepared. Call concatenate_sessions() first.")
+
+                combined_psth_matrix = np.concatenate(
+                    [self.combined_go_left_test, self.combined_go_right_test],
+                    axis=1
+                )
+
+                print(f"✓ PCA matrix prepared (TEST only): {combined_psth_matrix.shape}")
+        else:
+            # Original behavior: no split
+            if self.combined_go_left is None:
+                raise ValueError("Data not prepared. Call concatenate_sessions() first.")
+
+            combined_psth_matrix = np.concatenate(
+                [self.combined_go_left, self.combined_go_right],
+                axis=1
+            )
+
+            print(f"✓ PCA matrix prepared: {combined_psth_matrix.shape}")
+
         print(f"  (n_cells={combined_psth_matrix.shape[0]}, n_features={combined_psth_matrix.shape[1]})")
 
         # Data quality checks
@@ -596,32 +817,83 @@ class MultiSessionPCA:
 
         print("Projecting all conditions onto PC space...")
 
-        # Project GO data
-        combined_go_matrix = np.concatenate(
-            [self.combined_go_left, self.combined_go_right],
-            axis=1
-        )
-        go_projection = self.pca.transform(combined_go_matrix.T).T
+        if self.is_split:
+            # Split mode: project both train and test
+            # Project TRAIN data
+            combined_go_train = np.concatenate(
+                [self.combined_go_left_train, self.combined_go_right_train],
+                axis=1
+            )
+            go_train_projection = self.pca.transform(combined_go_train.T).T
 
-        cutoff = self.combined_go_left.shape[1]
-        self.go_left_PCs = go_projection[:, :cutoff]
-        self.go_right_PCs = go_projection[:, cutoff:]
+            cutoff = self.combined_go_left_train.shape[1]
+            self.go_left_PCs = go_train_projection[:, :cutoff]
+            self.go_right_PCs = go_train_projection[:, cutoff:]
 
-        # Project STOP data
-        combined_stop_matrix = np.concatenate(
-            [self.combined_stop_left, self.combined_stop_right],
-            axis=1
-        )
-        stop_projection = self.pca.transform(combined_stop_matrix.T).T
+            combined_stop_train = np.concatenate(
+                [self.combined_stop_left_train, self.combined_stop_right_train],
+                axis=1
+            )
+            stop_train_projection = self.pca.transform(combined_stop_train.T).T
 
-        self.stop_left_PCs = stop_projection[:, :cutoff]
-        self.stop_right_PCs = stop_projection[:, cutoff:]
+            self.stop_left_PCs = stop_train_projection[:, :cutoff]
+            self.stop_right_PCs = stop_train_projection[:, cutoff:]
 
-        print(f"✓ Projections complete:")
-        print(f"  GO Left: {self.go_left_PCs.shape}")
-        print(f"  GO Right: {self.go_right_PCs.shape}")
-        print(f"  STOP Left: {self.stop_left_PCs.shape}")
-        print(f"  STOP Right: {self.stop_right_PCs.shape}")
+            # Project TEST data
+            combined_go_test = np.concatenate(
+                [self.combined_go_left_test, self.combined_go_right_test],
+                axis=1
+            )
+            go_test_projection = self.pca.transform(combined_go_test.T).T
+
+            self.go_left_PCs_test = go_test_projection[:, :cutoff]
+            self.go_right_PCs_test = go_test_projection[:, cutoff:]
+
+            combined_stop_test = np.concatenate(
+                [self.combined_stop_left_test, self.combined_stop_right_test],
+                axis=1
+            )
+            stop_test_projection = self.pca.transform(combined_stop_test.T).T
+
+            self.stop_left_PCs_test = stop_test_projection[:, :cutoff]
+            self.stop_right_PCs_test = stop_test_projection[:, cutoff:]
+
+            print(f"✓ Projections complete (train/test split):")
+            print(f"  Train - GO Left: {self.go_left_PCs.shape}")
+            print(f"  Train - GO Right: {self.go_right_PCs.shape}")
+            print(f"  Train - STOP Left: {self.stop_left_PCs.shape}")
+            print(f"  Train - STOP Right: {self.stop_right_PCs.shape}")
+            print(f"  Test  - GO Left: {self.go_left_PCs_test.shape}")
+            print(f"  Test  - GO Right: {self.go_right_PCs_test.shape}")
+            print(f"  Test  - STOP Left: {self.stop_left_PCs_test.shape}")
+            print(f"  Test  - STOP Right: {self.stop_right_PCs_test.shape}")
+
+        else:
+            # Original behavior: no split
+            combined_go_matrix = np.concatenate(
+                [self.combined_go_left, self.combined_go_right],
+                axis=1
+            )
+            go_projection = self.pca.transform(combined_go_matrix.T).T
+
+            cutoff = self.combined_go_left.shape[1]
+            self.go_left_PCs = go_projection[:, :cutoff]
+            self.go_right_PCs = go_projection[:, cutoff:]
+
+            combined_stop_matrix = np.concatenate(
+                [self.combined_stop_left, self.combined_stop_right],
+                axis=1
+            )
+            stop_projection = self.pca.transform(combined_stop_matrix.T).T
+
+            self.stop_left_PCs = stop_projection[:, :cutoff]
+            self.stop_right_PCs = stop_projection[:, cutoff:]
+
+            print(f"✓ Projections complete:")
+            print(f"  GO Left: {self.go_left_PCs.shape}")
+            print(f"  GO Right: {self.go_right_PCs.shape}")
+            print(f"  STOP Left: {self.stop_left_PCs.shape}")
+            print(f"  STOP Right: {self.stop_right_PCs.shape}")
 
         return self
 
@@ -1017,8 +1289,12 @@ class MultiSessionPCA:
     @property
     def n_cells(self):
         """Total number of cells across all sessions."""
-        if self.combined_go_left is not None:
-            return self.combined_go_left.shape[0]
+        if self.is_split:
+            if self.combined_go_left_train is not None:
+                return self.combined_go_left_train.shape[0]
+        else:
+            if self.combined_go_left is not None:
+                return self.combined_go_left.shape[0]
         return 0
 
     @property
