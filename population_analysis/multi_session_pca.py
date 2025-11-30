@@ -11,6 +11,7 @@ Date: November 2025
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import holoviews as hv
 from pathlib import Path
 from sklearn.decomposition import PCA, TruncatedSVD
 from sklearn.preprocessing import StandardScaler
@@ -171,6 +172,41 @@ class MultiSessionPCA:
         print(f"✓ Database loaded: {self.cell_df.shape[0]:,} cell-trial combinations")
         print(f"  Total sessions: {self.cell_df['trial_session'].nunique()}")
         print(f"  Total unique cells: {self.cell_df['cell_ID'].nunique()}")
+
+        return self
+
+    def populate_go_stop_cue(self):
+        """
+        Populate stop_cue for GO trials using mean SSD from STOP trials.
+
+        Calculates the mean SSD length for successful STOP trials (with configured ssd_number)
+        and sets stop_cue = go_cue + mean_ssd for all GO trials.
+        This is useful when aligning GO trials to the theoretical stop signal time.
+        """
+        if self.cell_df is None:
+            raise ValueError("Data not loaded. Call load_data() first.")
+
+        ssd_num = self.config['ssd_number']
+
+        # Calculate mean SSD
+        stop_trials_mask = (
+            (self.cell_df['type'] == 'STOP') &
+            (self.cell_df['trial_failed'] == False) &
+            (self.cell_df['ssd_number'] == ssd_num)
+        )
+
+        if not stop_trials_mask.any():
+            print(f"Warning: No successful STOP trials found with ssd_number={ssd_num}. Cannot calculate mean SSD.")
+            return self
+
+        mean_ssd = int(self.cell_df.loc[stop_trials_mask, 'ssd_len'].mean())
+
+        # Update GO trials
+        go_trials_mask = self.cell_df['type'] == 'GO'
+        self.cell_df.loc[go_trials_mask, 'stop_cue'] = self.cell_df.loc[go_trials_mask, 'go_cue'] + mean_ssd
+
+        print(f"✓ Populated stop_cue for {go_trials_mask.sum()} GO trials")
+        print(f"  Mean SSD (ssd_number={ssd_num}): {mean_ssd} ms")
 
         return self
 
@@ -1270,6 +1306,119 @@ class MultiSessionPCA:
             plt.close()
 
         return fig, axes
+
+    def calculate_rolling_correlation(self, pc_idx=0, window_size=50, data_split=None):
+        """
+        Calculate rolling correlation between GO and STOP trials on a specific PC.
+
+        Parameters:
+        -----------
+        pc_idx : int, optional
+            Index of the principal component to analyze (0-indexed). Default: 0 (PC1)
+        window_size : int, optional
+            Size of the rolling window in bins. Default: 50
+        data_split : str or None, optional
+            Which data to use: 'train', 'test', or None (auto-detect).
+
+        Returns:
+        --------
+        tuple : (time_axis, rolling_corr_left, rolling_corr_right, title_suffix)
+        """
+        # Select appropriate data using helper method
+        go_left, go_right, stop_left, stop_right, title_suffix = self._select_data_for_split(data_split)
+
+        # Extract projections for the specified PC
+        go_left_pc = go_left[pc_idx]
+        stop_left_pc = stop_left[pc_idx]
+        go_right_pc = go_right[pc_idx]
+        stop_right_pc = stop_right[pc_idx]
+
+        # Compute rolling correlations using pandas Series
+        rolling_corr_left = pd.Series(go_left_pc).rolling(window=window_size).corr(pd.Series(stop_left_pc))
+        rolling_corr_right = pd.Series(go_right_pc).rolling(window=window_size).corr(pd.Series(stop_right_pc))
+
+        # Get time axis
+        if self.time is not None:
+            time_axis = self.time
+        else:
+            # Fallback: generate based on config
+            t_start, t_end = self.config['epok']
+            time_axis = np.linspace(t_start, t_end, len(go_left_pc))
+
+        return time_axis, rolling_corr_left, rolling_corr_right, title_suffix
+
+    def plot_rolling_correlation(self, pc_idx=0, window_size=50, data_split=None):
+        """
+        Plot rolling correlation between GO and STOP trials on a specific PC or list of PCs.
+        Plots both Left (180°) and Right (0°) directions.
+
+        Parameters:
+        -----------
+        pc_idx : int or list of ints, optional
+            Index(es) of the principal component(s) to analyze (0-indexed). Default: 0 (PC1)
+        window_size : int, optional
+            Size of the rolling window in bins. Default: 50
+        data_split : str or None, optional
+            Which data to use: 'train', 'test', or None (auto-detect).
+        """
+        # Handle pc_idx being int or list
+        if isinstance(pc_idx, (int, np.integer)):
+            pc_indices = [int(pc_idx)]
+        elif isinstance(pc_idx, (list, tuple, np.ndarray)):
+            pc_indices = [int(i) for i in pc_idx]
+        else:
+            raise ValueError("pc_idx must be an integer or a list of integers")
+
+        # Validate indices
+        go_left, _, _, _, title_suffix = self._select_data_for_split(data_split)
+        n_pcs = go_left.shape[0]
+        
+        for idx in pc_indices:
+            if idx < 0 or idx >= n_pcs:
+                raise ValueError(f"PC index {idx} out of range. Available PCs: 0 to {n_pcs-1}")
+
+        curves = []
+        use_distinct_colors = len(pc_indices) > 1
+        
+        for idx in pc_indices:
+            # Calculate correlations
+            time_axis, rolling_corr_left, rolling_corr_right, _ = self.calculate_rolling_correlation(
+                pc_idx=idx, window_size=window_size, data_split=data_split
+            )
+            
+            label_suffix = f" (PC{idx+1})" if use_distinct_colors else ""
+            
+            curve_left = hv.Curve((time_axis, rolling_corr_left), kdims='Time (ms)', vdims='Correlation', 
+                                  label=f'Left (180°){label_suffix}')
+            
+            curve_right = hv.Curve((time_axis, rolling_corr_right), kdims='Time (ms)', vdims='Correlation', 
+                                   label=f'Right (0°){label_suffix}')
+            
+            if not use_distinct_colors:
+                curve_left = curve_left.opts(color='purple', line_width=2)
+                curve_right = curve_right.opts(color='orange', line_width=2)
+            else:
+                # If multiple PCs, let Holoviews handle colors but distinguish Left/Right by line style
+                curve_left = curve_left.opts(line_width=2)
+                curve_right = curve_right.opts(line_width=2, line_dash='dashed')
+
+            curves.append(curve_left)
+            curves.append(curve_right)
+        
+        zero_line = hv.HLine(0).opts(color='black', line_dash='dashed', alpha=0.5)
+        
+        title_pcs = f"PC{pc_indices[0]+1}" if len(pc_indices) == 1 else "PCs " + ",".join([str(i+1) for i in pc_indices])
+        
+        plot = hv.Overlay(curves + [zero_line]).opts(
+            title=f'Rolling Correlation: GO vs STOP ({title_pcs}){title_suffix}',
+            ylabel=f'Correlation (window={window_size}ms)',
+            width=900, height=450,
+            show_grid=True,
+            legend_position='top_right',
+            toolbar='above'
+        )
+
+        return plot
 
     # ========================================================================
     # SECTION 7: I/O and Utilities
