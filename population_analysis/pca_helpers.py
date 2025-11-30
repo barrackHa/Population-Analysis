@@ -266,6 +266,12 @@ def extract_session_psth_worker(session_id, pickle_path=None, session_df=None,
                 common_cells_ordered = [c for c in train_result['cell_ids']
                                        if c in common_cells]
 
+                # Check for empty common cells and raise an informative error
+                if not common_cells_ordered:
+                    raise ValueError(
+                        f"No common cells found between train and test splits for session {session_id}. "
+                        f"Train cells: {len(train_cells)}, Test cells: {len(test_cells)}."
+                    )
                 # Filter both train and test to same cells
                 train_result = _filter_result_to_cells(train_result, common_cells_ordered)
                 test_result = _filter_result_to_cells(test_result, common_cells_ordered)
