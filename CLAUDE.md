@@ -54,8 +54,19 @@ session.plot_trial_type_PSTH_comparison(epok_go=[-200, 700], bin_size=10)
 
 ### PCA Analysis
 ```python
-# Split data
+# Single-session PCA
 train, test = session.split_to_train_test(test_fraction=0.5, random_state=42)
+
+# Multi-session PCA
+from multi_session_pca import MultiSessionPCA
+analyzer = MultiSessionPCA(config)
+analyzer.load_data('data/unified_cell_trial_data/msn_fiona_cell_trial_data.pkl')
+analyzer.validate_all_sessions()
+analyzer.extract_all_sessions_parallel(split_train_test=True, test_fraction=0.5, random_state=42)
+analyzer.concatenate_sessions()
+analyzer.subtract_average_PSTH()
+analyzer.fit_and_project(n_components=5)
+analyzer.plot_3d_trajectory()  # Shows test data by default
 
 # See PCA_GUIDE.md for complete workflow
 ```
@@ -81,6 +92,13 @@ Session (session_class.py)
 ├── PCA-ready data preparation
 ├── Train/test data splitting
 └── Population visualizations
+
+MultiSessionPCA (multi_session_pca.py)
+├── Multi-session population PCA
+├── Parallel PSTH extraction across sessions
+├── Train/test split support (optional)
+├── PCA fitting and projection
+└── 3D/2D trajectory visualizations
 ```
 
 ---
@@ -171,10 +189,11 @@ population_analysis/
 │   │   └── msn_fiona_cell_trial_data.pkl
 │   └── PCA_data/
 ├── population_analysis/
-│   ├── cell_analysis.py
-│   ├── session_class.py
+│   ├── cell_analysis.py          # Cell & PopulationAnalyzer classes
+│   ├── session_class.py           # Session class
+│   ├── multi_session_pca.py       # MultiSessionPCA class
+│   ├── pca_helpers.py             # Parallel processing workers
 │   ├── plot_PCA_in_3D.py
-│   ├── pca_helpers.py
 │   ├── session_PCA_analysis.ipynb
 │   ├── multi_session_PCA_analysis.ipynb
 │   └── ...

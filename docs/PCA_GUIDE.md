@@ -359,35 +359,134 @@ with open('data/PCA_data/pca_model.pkl', 'rb') as f:
 **Purpose**: Combine neural populations across multiple recording sessions for larger-scale PCA analysis.
 
 **Files**:
-- `population_analysis/multi_session_PCA_analysis.ipynb` - Main analysis notebook
+- `population_analysis/multi_session_pca.py` - Main `MultiSessionPCA` class
+- `population_analysis/multi_session_PCA_analysis.ipynb` - Analysis notebook
 - `population_analysis/pca_helpers.py` - Worker functions for parallel processing
 
 ### Key Differences from Single-Session:
 - Combines 1000+ cells from 40+ sessions (vs. 10-50 cells from one session)
 - Uses ProcessPoolExecutor for parallel PSTH extraction
-- No train/test split (all data used, cross-session variability provides validation)
+- **Supports train/test split** for robust validation (optional)
 - Memory-efficient: discards Session objects after extracting PSTH matrices
 - Tracks cell-to-session mapping for post-hoc analysis
 
 ### Configuration:
 
 ```python
-EPOK = [-50, 150]  # ms relative to go_cue
-BIN_SIZE = 1  # ms
-NORMALIZE = 'by_baseline_FR'  # Subtract baseline FR from each cell
-N_PCA_COMPONENTS = 5
-MIN_CELLS_PER_SESSION = 10  # Validation threshold
-MIN_TRIALS_PER_CONDITION = 5  # Validation threshold
+config = {
+    'epok': [-50, 150],  # ms relative to go_cue
+    'bin_size': 1,  # ms
+    'alignment_point': 'go_cue',
+    'smooth_ker_size': 25,
+    'normalize': 'by_baseline_FR',  # Subtract baseline FR from each cell
+    'n_pca_components': 5,
+    'subtract_average_PSTH': True,
+    'ssd_number': 1,
+
+    # Validation criteria
+    'min_cells_per_session': 10,
+    'min_trials_per_condition': 5,
+    'required_trial_types': ['GO', 'STOP', 'CONT'],
+    'required_directions': [0, 180],
+}
 ```
 
-### Workflow:
+### Basic Workflow (No Train/Test Split):
 
-1. **Validate sessions** (sufficient cells and trials per condition)
-2. **Extract PSTH matrices in parallel** using `pca_helpers.extract_session_psth_worker()`
-3. **Concatenate matrices** across all sessions
-4. **Fit PCA** on combined population
-5. **Project GO and STOP data** to PC space
-6. **Visualize trajectories** and save results to `data/PCA_data/multi_session/`
+```python
+from multi_session_pca import MultiSessionPCA
+
+# Initialize and load data
+analyzer = MultiSessionPCA(config)
+analyzer.load_data('data/unified_cell_trial_data/msn_fiona_cell_trial_data.pkl')
+
+# Validate sessions and extract PSTHs
+analyzer.validate_all_sessions()
+analyzer.extract_all_sessions_parallel()
+
+# Prepare data and fit PCA
+analyzer.concatenate_sessions()
+analyzer.subtract_average_PSTH()
+analyzer.fit_and_project(n_components=5)
+
+# Visualize
+analyzer.plot_3d_trajectory(show=True)
+analyzer.plot_2d_grid(show=True)
+analyzer.plot_pc_timeseries(pcs_to_plot=[0, 1, 2], show=True)
+
+# Save results
+analyzer.save_results('data/PCA_data/multi_session/')
+```
+
+### Train/Test Split Workflow (Recommended):
+
+```python
+from multi_session_pca import MultiSessionPCA
+
+# Initialize and load data
+analyzer = MultiSessionPCA(config)
+analyzer.load_data('data/unified_cell_trial_data/msn_fiona_cell_trial_data.pkl')
+
+# Validate sessions
+analyzer.validate_all_sessions()
+
+# Extract PSTHs with train/test split
+analyzer.extract_all_sessions_parallel(
+    split_train_test=True,
+    test_fraction=0.5,  # 50% train, 50% test
+    random_state=42     # Reproducible splits
+)
+
+# Prepare data and fit PCA on TRAIN data
+analyzer.concatenate_sessions()
+analyzer.subtract_average_PSTH()
+analyzer.fit_and_project(n_components=5)
+
+# Visualize TEST data (default when split is enabled)
+analyzer.plot_3d_trajectory(show=True)  # Shows test data
+analyzer.plot_2d_grid(show=True)        # Shows test data
+analyzer.plot_pc_timeseries(show=True)  # Shows test data
+
+# Can also explicitly visualize train or test
+analyzer.plot_3d_trajectory(data_split='train', show=True)
+analyzer.plot_3d_trajectory(data_split='test', show=True)
+
+# Save results
+analyzer.save_results('data/PCA_data/multi_session/')
+```
+
+### Key Methods:
+
+| Method | Purpose |
+|--------|---------|
+| `load_data(pickle_path)` | Load cell database |
+| `validate_all_sessions()` | Filter sessions meeting criteria |
+| `extract_all_sessions_parallel()` | Extract PSTHs (parallel) |
+| `concatenate_sessions()` | Combine across sessions |
+| `subtract_average_PSTH()` | Remove baseline activity |
+| `fit_and_project()` | Fit PCA and project data |
+| `plot_3d_trajectory()` | 3D PC space visualization |
+| `plot_2d_grid()` | 2D PC projections |
+| `plot_pc_timeseries()` | Time series of PCs |
+| `save_results()` | Save PC projections and metadata |
+
+### Plotting with data_split Parameter:
+
+All plotting methods support a `data_split` parameter:
+- `data_split=None` (default): Auto-detect - use test if available, otherwise train
+- `data_split='train'`: Explicitly plot training data
+- `data_split='test'`: Explicitly plot test data (raises error if not split)
+
+```python
+# Auto-detect (uses test if split was performed)
+analyzer.plot_3d_trajectory()
+
+# Explicitly choose train
+analyzer.plot_3d_trajectory(data_split='train')
+
+# Explicitly choose test
+analyzer.plot_3d_trajectory(data_split='test')
+```
 
 ### Example Results (Fiona, 40 sessions, 1,322 cells):
 - PC1-3: 81.2% variance explained
@@ -395,8 +494,11 @@ MIN_TRIALS_PER_CONDITION = 5  # Validation threshold
 - Clear GO left/right trajectory separation
 - STOP trajectories diverge from GO after signal onset
 
-### Important Note:
-Worker function must be in separate `.py` module (not notebook) for ProcessPoolExecutor pickling.
+### Important Notes:
+- Worker function must be in separate `.py` module (not notebook) for ProcessPoolExecutor pickling
+- Train/test split occurs at the trial level within each session (same cells in train and test)
+- PCA is always fitted on training data only
+- Validation uses test data to ensure generalizability
 
 ---
 
