@@ -1004,7 +1004,7 @@ class MultiSessionPCA:
 
         return go_left, go_right, stop_left, stop_right, title_suffix
 
-    def plot_3d_trajectory(self, data_split=None, save_path=None, show=True):
+    def plot_3d_trajectory(self, data_split=None, save_path=None, show=True, plot_ssd=True):
         """
         Plot 3D PC trajectories for GO and STOP trials.
 
@@ -1019,6 +1019,8 @@ class MultiSessionPCA:
             Path to save figure
         show : bool
             Display figure
+        plot_ssd : bool, optional
+            If True, plot the mean SSD point on the trajectories. Default: True
         """
         # Select appropriate data using helper method
         go_left, go_right, stop_left, stop_right, title_suffix = self._select_data_for_split(data_split)
@@ -1048,6 +1050,23 @@ class MultiSessionPCA:
         ax.scatter(stop_right[0, 0], stop_right[1, 0], stop_right[2, 0],
                   marker='*', s=200, color='orange', edgecolors='black', linewidths=2, zorder=5)
 
+        # Plot mean SSD point
+        if plot_ssd:
+            try:
+                mean_ssd_val = self.mean_ssd
+                if mean_ssd_val is not None and self.time is not None:
+                    ssd_idx = np.argmin(np.abs(self.time - mean_ssd_val))
+                    ax.scatter(go_left[0, ssd_idx], go_left[1, ssd_idx], go_left[2, ssd_idx],
+                              marker='o', s=100, color='black', label='Mean SSD', zorder=10)
+                    ax.scatter(go_right[0, ssd_idx], go_right[1, ssd_idx], go_right[2, ssd_idx],
+                              marker='o', s=100, color='black', zorder=10)
+                    ax.scatter(stop_left[0, ssd_idx], stop_left[1, ssd_idx], stop_left[2, ssd_idx],
+                              marker='o', s=100, color='black', zorder=10)
+                    ax.scatter(stop_right[0, ssd_idx], stop_right[1, ssd_idx], stop_right[2, ssd_idx],
+                              marker='o', s=100, color='black', zorder=10)
+            except Exception as e:
+                print(f"Warning: Could not plot mean SSD point. {str(e)}")
+
         ax.set_xlabel('PC1', fontsize=14)
         ax.set_ylabel('PC2', fontsize=14)
         ax.set_zlabel('PC3', fontsize=14)
@@ -1068,7 +1087,7 @@ class MultiSessionPCA:
 
         return fig, ax
 
-    def plot_2d_grid(self, data_split=None, save_path=None, show=True, figsize=None):
+    def plot_2d_grid(self, data_split=None, save_path=None, show=True, figsize=None, plot_ssd=True):
         """
         Plot 2D PC projections in a column layout.
 
@@ -1090,6 +1109,8 @@ class MultiSessionPCA:
             Display figure
         figsize : tuple, optional
             Figure size (width, height)
+        plot_ssd : bool, optional
+            If True, plot the mean SSD point on the trajectories. Default: True
         """
         # Select appropriate data using helper method
         go_left, go_right, stop_left, stop_right, title_suffix = self._select_data_for_split(data_split)
@@ -1097,7 +1118,17 @@ class MultiSessionPCA:
         if figsize is None:
             figsize = self.config['figsize_2d_grid']
 
-        def _plot_pc_projection(ax, i, j, go_left, go_right, stop_left, stop_right, title_suffix=""):
+        # Calculate mean SSD index
+        ssd_idx = None
+        if plot_ssd:
+            try:
+                mean_ssd_val = self.mean_ssd
+                if mean_ssd_val is not None and self.time is not None:
+                    ssd_idx = np.argmin(np.abs(self.time - mean_ssd_val))
+            except Exception as e:
+                print(f"Warning: Could not calculate mean SSD index. {str(e)}")
+
+        def _plot_pc_projection(ax, i, j, go_left, go_right, stop_left, stop_right, title_suffix="", ssd_idx=None):
             """
             Helper function to plot PCi vs PCj trajectories.
 
@@ -1113,6 +1144,8 @@ class MultiSessionPCA:
                 PC projection data
             title_suffix : str
                 Suffix to add to title (e.g., " - TEST" or " - TRAIN")
+            ssd_idx : int or None
+                Index of mean SSD time point
             """
             # Plot trajectories
             ax.plot(go_left[i, :], go_left[j, :], 'b-', lw=2, label='GO Left')
@@ -1131,6 +1164,12 @@ class MultiSessionPCA:
                       [stop_left[j, 0], stop_right[j, 0]],
                       marker='*', s=200, c=['red', 'orange'], edgecolors='black', lw=2, zorder=5)
 
+            # Mean SSD markers
+            if ssd_idx is not None:
+                ax.scatter([go_left[i, ssd_idx], go_right[i, ssd_idx], stop_left[i, ssd_idx], stop_right[i, ssd_idx]],
+                          [go_left[j, ssd_idx], go_right[j, ssd_idx], stop_left[j, ssd_idx], stop_right[j, ssd_idx]],
+                          marker='o', s=100, c='black', zorder=10, label='Mean SSD')
+
             # Labels and formatting
             ax.set_xlabel(f'PC{i+1}')
             ax.set_ylabel(f'PC{j+1}')
@@ -1141,13 +1180,13 @@ class MultiSessionPCA:
         fig, axes = plt.subplots(3, 1, figsize=figsize)
 
         # PC1 vs PC2
-        _plot_pc_projection(axes[0], 0, 1, go_left, go_right, stop_left, stop_right, title_suffix)
+        _plot_pc_projection(axes[0], 0, 1, go_left, go_right, stop_left, stop_right, title_suffix, ssd_idx)
 
         # PC2 vs PC3
-        _plot_pc_projection(axes[1], 1, 2, go_left, go_right, stop_left, stop_right, title_suffix)
+        _plot_pc_projection(axes[1], 1, 2, go_left, go_right, stop_left, stop_right, title_suffix, ssd_idx)
 
         # PC3 vs PC1
-        _plot_pc_projection(axes[2], 2, 0, go_left, go_right, stop_left, stop_right, title_suffix)
+        _plot_pc_projection(axes[2], 2, 0, go_left, go_right, stop_left, stop_right, title_suffix, ssd_idx)
 
         plt.tight_layout()
 
