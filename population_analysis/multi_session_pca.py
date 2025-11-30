@@ -1528,7 +1528,11 @@ class MultiSessionPCA:
     @property
     def mean_ssd(self):
         try:
-            return self._mean_ssd
+            if self._mean_ssd is not None:
+                return self._mean_ssd
+            else:
+                raise AttributeError
+            
         except AttributeError:
             if self.cell_df is None:
                 raise ValueError("Data not loaded. Call load_data() first.")
