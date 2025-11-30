@@ -183,23 +183,10 @@ class MultiSessionPCA:
         and sets stop_cue = go_cue + mean_ssd for all GO trials.
         This is useful when aligning GO trials to the theoretical stop signal time.
         """
-        if self.cell_df is None:
-            raise ValueError("Data not loaded. Call load_data() first.")
-
+        
         ssd_num = self.config['ssd_number']
 
-        # Calculate mean SSD
-        stop_trials_mask = (
-            (self.cell_df['type'] == 'STOP') &
-            (self.cell_df['trial_failed'] == False) &
-            (self.cell_df['ssd_number'] == ssd_num)
-        )
-
-        if not stop_trials_mask.any():
-            print(f"Warning: No successful STOP trials found with ssd_number={ssd_num}. Cannot calculate mean SSD.")
-            return self
-
-        mean_ssd = int(self.cell_df.loc[stop_trials_mask, 'ssd_len'].mean())
+        mean_ssd = self.mean_ssd
 
         # Update GO trials
         go_trials_mask = self.cell_df['type'] == 'GO'
@@ -1537,3 +1524,33 @@ class MultiSessionPCA:
         if self.time is not None:
             return len(self.time)
         return 0
+    
+    @property
+    def mean_ssd(self):
+        try:
+            return self._mean_ssd
+        except AttributeError:
+            if self.cell_df is None:
+                raise ValueError("Data not loaded. Call load_data() first.")
+
+            ssd_num = self.config['ssd_number']
+            
+            if ssd_num is None:
+                raise ValueError("ssd_number cannot be None. Please set a valid ssd_number in config.")
+
+            # Calculate mean SSD
+            stop_trials_mask = (
+                (self.cell_df['type'] == 'STOP') &
+                (self.cell_df['trial_failed'] == False) &
+                (self.cell_df['ssd_number'] == ssd_num)
+            )
+
+            if not stop_trials_mask.any():
+                print(f"Warning: No successful STOP trials found with ssd_number={ssd_num}. Cannot calculate mean SSD.")
+                return self
+
+            self._mean_ssd, self._ssd_std = self.cell_df.loc[stop_trials_mask, 'ssd_len'].apply(
+                ['mean', 'std']
+            ).astype(int).to_list()
+            return self._mean_ssd
+
