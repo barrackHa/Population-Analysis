@@ -925,6 +925,62 @@ class MultiSessionPCA:
     # SECTION 6: Visualization
     # ========================================================================
 
+    def _select_data_for_split(self, data_split):
+        """
+        Select appropriate data arrays based on train/test split.
+
+        Parameters:
+        -----------
+        data_split : str or None
+            Which data to use: 'train', 'test', or None (auto-detect).
+            - None: Use 'test' if data was split, otherwise 'train'
+            - 'test': Explicitly use test data (raises error if not available)
+            - 'train': Explicitly use train data
+
+        Returns:
+        --------
+        tuple : (go_left, go_right, stop_left, stop_right, title_suffix)
+            Data arrays and title suffix string
+        """
+        # Validate data_split parameter
+        valid_splits = [None, 'train', 'test']
+        if data_split not in valid_splits:
+            raise ValueError(f"Invalid data_split value: {data_split}. Must be one of {valid_splits}")
+
+        # Auto-detect data split if not specified
+        if data_split is None:
+            data_split = 'test' if self.is_split else 'train'
+
+        # Determine which data to use
+        if data_split == 'test':
+            if not self.is_split:
+                raise ValueError(
+                    "Test data requested but data was not split. "
+                    "Use data_split='train' or run extract_all_sessions_parallel() with split_train_test=True."
+                )
+
+            # Split data available, return test
+            if self.go_left_PCs_test is None:
+                raise ValueError("Test data not projected. Call project_all_conditions() first.")
+
+            go_left = self.go_left_PCs_test
+            go_right = self.go_right_PCs_test
+            stop_left = self.stop_left_PCs_test
+            stop_right = self.stop_right_PCs_test
+            title_suffix = " - TEST"
+
+        else:  # 'train'
+            if self.go_left_PCs is None:
+                raise ValueError("Data not projected. Call project_all_conditions() first.")
+
+            go_left = self.go_left_PCs
+            go_right = self.go_right_PCs
+            stop_left = self.stop_left_PCs
+            stop_right = self.stop_right_PCs
+            title_suffix = " - TRAIN" if self.is_split else ""
+
+        return go_left, go_right, stop_left, stop_right, title_suffix
+
     def plot_3d_trajectory(self, data_split=None, save_path=None, show=True):
         """
         Plot 3D PC trajectories for GO and STOP trials.
@@ -941,32 +997,8 @@ class MultiSessionPCA:
         show : bool
             Display figure
         """
-        # Auto-detect data split if not specified
-        if data_split is None:
-            data_split = 'test' if self.is_split else 'train'
-
-        # Determine which data to plot
-        if data_split == 'test':
-            if not self.is_split:
-                raise ValueError("Test data requested but data was not split. Use data_split='train' or run extract_all_sessions_parallel() with split_train_test=True.")
-
-            # Split data available, show test
-            if self.go_left_PCs_test is None:
-                raise ValueError("Test data not projected. Call project_all_conditions() first.")
-            go_left = self.go_left_PCs_test
-            go_right = self.go_right_PCs_test
-            stop_left = self.stop_left_PCs_test
-            stop_right = self.stop_right_PCs_test
-            title_suffix = " - TEST"
-        else:  # 'train'
-            if self.go_left_PCs is None:
-                raise ValueError("Data not projected. Call project_all_conditions() first.")
-
-            go_left = self.go_left_PCs
-            go_right = self.go_right_PCs
-            stop_left = self.stop_left_PCs
-            stop_right = self.stop_right_PCs
-            title_suffix = " - TRAIN" if self.is_split else ""
+        # Select appropriate data using helper method
+        go_left, go_right, stop_left, stop_right, title_suffix = self._select_data_for_split(data_split)
 
         fig = plt.figure(figsize=self.config['figsize_3d'])
         ax = fig.add_subplot(111, projection='3d')
@@ -1036,32 +1068,8 @@ class MultiSessionPCA:
         figsize : tuple, optional
             Figure size (width, height)
         """
-        # Auto-detect data split if not specified
-        if data_split is None:
-            data_split = 'test' if self.is_split else 'train'
-
-        # Determine which data to plot
-        if data_split == 'test':
-            if not self.is_split:
-                raise ValueError("Test data requested but data was not split. Use data_split='train' or run extract_all_sessions_parallel() with split_train_test=True.")
-
-            # Split data available, show test
-            if self.go_left_PCs_test is None:
-                raise ValueError("Test data not projected. Call project_all_conditions() first.")
-            go_left = self.go_left_PCs_test
-            go_right = self.go_right_PCs_test
-            stop_left = self.stop_left_PCs_test
-            stop_right = self.stop_right_PCs_test
-            title_suffix = " - TEST"
-        else:  # 'train'
-            if self.go_left_PCs is None:
-                raise ValueError("Data not projected. Call project_all_conditions() first.")
-
-            go_left = self.go_left_PCs
-            go_right = self.go_right_PCs
-            stop_left = self.stop_left_PCs
-            stop_right = self.stop_right_PCs
-            title_suffix = " - TRAIN" if self.is_split else ""
+        # Select appropriate data using helper method
+        go_left, go_right, stop_left, stop_right, title_suffix = self._select_data_for_split(data_split)
 
         if figsize is None:
             figsize = self.config['figsize_2d_grid']
@@ -1151,32 +1159,8 @@ class MultiSessionPCA:
         figsize : tuple, optional
             Figure size (width, height)
         """
-        # Auto-detect data split if not specified
-        if data_split is None:
-            data_split = 'test' if self.is_split else 'train'
-
-        # Determine which data to plot
-        if data_split == 'test':
-            if not self.is_split:
-                raise ValueError("Test data requested but data was not split. Use data_split='train' or run extract_all_sessions_parallel() with split_train_test=True.")
-
-            # Split data available, show test
-            if self.go_left_PCs_test is None:
-                raise ValueError("Test data not projected. Call project_all_conditions() first.")
-            go_left = self.go_left_PCs_test
-            go_right = self.go_right_PCs_test
-            stop_left = self.stop_left_PCs_test
-            stop_right = self.stop_right_PCs_test
-            title_suffix = " - TEST"
-        else:  # 'train'
-            if self.go_left_PCs is None:
-                raise ValueError("Data not projected. Call project_all_conditions() first.")
-
-            go_left = self.go_left_PCs
-            go_right = self.go_right_PCs
-            stop_left = self.stop_left_PCs
-            stop_right = self.stop_right_PCs
-            title_suffix = " - TRAIN" if self.is_split else ""
+        # Select appropriate data using helper method
+        go_left, go_right, stop_left, stop_right, title_suffix = self._select_data_for_split(data_split)
 
         if figsize is None:
             figsize = self.config['figsize_time']
