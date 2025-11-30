@@ -711,7 +711,7 @@ class MultiSessionPCA:
         subtract_average : bool
             If True, subtract the mean trace from the matrix
         use_train_only : bool
-            If True and data is split, use only train data. Otherwise use all data.
+            If True and data is split, use only train data. If False, use test data.
         """
         if self.is_split:
             if use_train_only:
