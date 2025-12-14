@@ -89,6 +89,91 @@ class Cell:
         self._baseline_FR = base_FR
         return self._baseline_FR
     
+    @property
+    def go_left_FR(self):
+        # Calculate go left trial firing rate from 0 to 500 ms after go_cue       
+        _, spike_counts, n_trials = self.aggregate_spikes_by_bins(  
+            epok=[0, 500], bin_size=1,
+            alignment_point='go_cue', trial_type='GO', 
+            direction=180, ssd_number=None, 
+            success_only=True, normalize=False
+        )
+        go_left_FR = (spike_counts / n_trials).mean() * 1000  # spikes/sec
+        return go_left_FR
+    
+    @property
+    def go_right_FR(self):
+        # Calculate go right trial firing rate from 0 to 500 ms after go_cue       
+        _, spike_counts, n_trials = self.aggregate_spikes_by_bins(  
+            epok=[0, 500], bin_size=1,
+            alignment_point='go_cue', trial_type='GO', 
+            direction=0, ssd_number=None, 
+            success_only=True, normalize=False
+        )
+        go_right_FR = (spike_counts / n_trials).mean() * 1000  # spikes/sec
+        return go_right_FR
+    
+    @property
+    def left_stop_FR(self):
+        # Calculate stop left trial firing rate from 0 to 200 ms after stop_cue       
+        _, spike_counts, n_trials = self.aggregate_spikes_by_bins(  
+            epok=[0, 200], bin_size=1,
+            alignment_point='stop_cue', trial_type='STOP', 
+            direction=180, ssd_number=None, 
+            success_only=True, normalize=False
+        )
+        left_stop_FR = (spike_counts / n_trials).mean() * 1000  # spikes/sec
+        return left_stop_FR
+    
+    @property
+    def right_stop_FR(self):
+        # Calculate stop right trial firing rate from 0 to 200 ms after stop_cue       
+        _, spike_counts, n_trials = self.aggregate_spikes_by_bins(  
+            epok=[0, 200], bin_size=1,
+            alignment_point='stop_cue', trial_type='STOP', 
+            direction=0, ssd_number=None, 
+            success_only=True, normalize=False
+        )
+        right_stop_FR = (spike_counts / n_trials).mean() * 1000  # spikes/sec
+        return right_stop_FR
+    
+    @property   
+    def left_cont_FR(self):
+        # Calculate control left trial firing rate from 0 to 200 ms after go_cue       
+        _, spike_counts, n_trials = self.aggregate_spikes_by_bins(  
+            epok=[0, 200], bin_size=1,
+            alignment_point='go_cue', trial_type='CONT', 
+            direction=180, ssd_number=None, 
+            success_only=True, normalize=False
+        )
+        left_cont_FR = (spike_counts / n_trials).mean() * 1000  # spikes/sec
+        return left_cont_FR
+    
+    @property   
+    def right_cont_FR(self):
+        # Calculate control right trial firing rate from 0 to 200 ms after go_cue       
+        _, spike_counts, n_trials = self.aggregate_spikes_by_bins(  
+            epok=[0, 200], bin_size=1,
+            alignment_point='go_cue', trial_type='CONT', 
+            direction=0, ssd_number=None, 
+            success_only=True, normalize=False
+        )
+        right_cont_FR = (spike_counts / n_trials).mean() * 1000  # spikes/sec
+        return right_cont_FR
+    
+    @property   
+    def FR_summary(self):
+        return {
+            'baseline_FR': self.baseline_FR,
+            'go_left_FR': self.go_left_FR,
+            'go_right_FR': self.go_right_FR,
+            'left_stop_FR': self.left_stop_FR,
+            'right_stop_FR': self.right_stop_FR,
+            'left_cont_FR': self.left_cont_FR,
+            'right_cont_FR': self.right_cont_FR
+        }
+
+    
     def __repr__(self):
         return (f"Cell {self.cell_id} | Type: {self.cell_type} | "
                 f"Trials: {len(self.data)} | Directions: {self.directions} | "

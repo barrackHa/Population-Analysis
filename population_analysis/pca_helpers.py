@@ -320,6 +320,7 @@ def extract_session_psth_worker(session_id, pickle_path=None, session_df=None,
         return result
 
     except Exception as e:
+        raise e
         return {
             'session_id': session_id,
             'error': str(e),
