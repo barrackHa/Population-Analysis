@@ -33,8 +33,8 @@ class Cell:
     TYPE_COLORS = {'GO': '#2ca02c', 'STOP': '#d62728', 'CONT': '#9467bd'}  # Green, Red, Purple
     SSD_COLORS = {
         1: '#000000', 2: '#0072B2', 3: '#D55E00', 4: '#009E73',
-        'GO': '#2ca02c',  # Green for GO trials
-        'combined': '#1f77b4' 
+        'GO': "#ff2ef8",  # Green for GO trials
+        'combined': "#c0faff" 
     }  # Different colors for each SSD
     
     
