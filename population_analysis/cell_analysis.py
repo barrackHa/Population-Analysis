@@ -34,11 +34,13 @@ class Cell:
     SSD_COLORS = {
         1: '#000000', 2: '#0072B2', 3: '#D55E00', 4: '#009E73',
         'GO': "#ff2ef8",  # Green for GO trials
+        'GO_0': "#ff2ef8",
+        'GO_180': "#82ff2e",
         'combined': "#c0faff" 
     }  # Different colors for each SSD
     
     
-    def __init__(self, cell_df, verbose=False):
+    def __init__(self, cell_df, verbose=False, go_trials_stop_cue_alignment_bias=150):
         """
         Initialize MSN cell with its trial data.
         
@@ -46,11 +48,23 @@ class Cell:
         -----------
         cell_df : pd.DataFrame
             DataFrame containing all trials for a single cell
+        verbose: bool
+            If true - print cell properties
+        go_trials_stop_cue_alignment_bias: int
+            When aligning GO trials to stop_cue - stop_cue is NaN, instead use  
+            stop_cue = go_trials_stop_cue_alignment_bias
         """
         self.data = cell_df.copy().reset_index(drop=True)
         self.cell_id = cell_df.iloc[0]['cell_ID'].astype(int)
         self.cell_type = cell_df.iloc[0]['cell_type']
         self.sessions = cell_df['trial_session'].unique()
+        
+        assr_err = "Alignment bias represents time in MS after go cue and thus needs to be a positive int" 
+        assert (
+                isinstance(go_trials_stop_cue_alignment_bias, int) and \
+                (0 < go_trials_stop_cue_alignment_bias)
+            ), assr_err
+        self.go_trials_stop_cue_alignment_bias = go_trials_stop_cue_alignment_bias
 
         assert len(self.sessions) == 1, "Cell data should belong to a single session"
         
@@ -72,6 +86,7 @@ class Cell:
             print(f"  - Trial types: {self.trial_types}")
             print(f"  - Directions: {self.directions}")
             print(f"  - SSD numbers: {self.ssd_numbers}")
+            print(f"  - Alignment bias for GO trials to STOP cue: {self.ssd_numbers}")
     
     @property
     def baseline_FR(self):
@@ -214,8 +229,14 @@ class Cell:
             spikes = np.array(row['neural_data'], dtype=float)
             return spikes - t_0
         
+        if alignment_point == "stop_cue":
+            alignment_bias = self.go_trials_stop_cue_alignment_bias
+            go_trials_mask = self.data['type'] == 'GO'
+            self.data.loc[go_trials_mask, 'stop_cue'] = self.data.loc[go_trials_mask, 'go_cue'] + alignment_bias
+            print(f"✓ Populated stop_cue for {go_trials_mask.sum()} GO trials")
+
         aligned = self.data.apply(align_spikes, axis=1)
-        self.data[f'spikes_aligned_to_{alignment_point}'] = aligned
+        self.data[f'spikes_aligned_to_{alignment_point}'] = aligned        
         return aligned
     
     def filter_trials(self, trial_type=None, direction=None, ssd_number=None, 
@@ -787,6 +808,7 @@ class Cell:
                             continue
                         
                         # Create curve for this SSD
+                        dashed = "dotted" if (direction == 0) else "dashed" 
                         curve = hv.Curve(
                             (bin_centers, firing_rate),
                             kdims='Time', 
@@ -794,6 +816,7 @@ class Cell:
                             label=f'SSD{int(ssd_num)} (n={n_trials})'
                         ).opts(
                             color=ssd_colors.get(ssd_num, '#7f7f7f'),
+                            line_dash=dashed,
                             line_width=2, tools=['hover'], muted_alpha=0
                         )
                         plot_elements[f'SSD{int(ssd_num)}'] = curve
@@ -805,11 +828,14 @@ class Cell:
                     
                     # Combine and configure
                     smoothed_label = " (smoothed)" if smooth else ""
+                    ttl = f"Cell {self.cell_id} - {trial_type} trials - {dir_label} (Success Only)\n" + \
+                            f"PSTH by SSD (bin={bin_size}ms{smoothed_label}); " +\
+                            f"Dotted - right, Dashed - left. Aligned to {alignment_point}"
                     plot = (hv.NdOverlay(plot_elements) * zero_line).opts(
                         opts.NdOverlay(
                             xlabel=f'Time from {alignment_point} (ms)',
                             ylabel='Firing Rate (spikes/s)',
-                            title=f"Cell {self.cell_id} - {trial_type} trials - {dir_label} (Success Only)\nPSTH by SSD (bin={bin_size}ms{smoothed_label})",
+                            title=ttl,
                             width=800, height=300,
                             legend_position='top',
                             show_grid=True,
@@ -835,8 +861,12 @@ class Cell:
                     if bin_centers is None:
                         continue
                     
+                    # set colors
+                    # color = ssd_colors[f'GO_{direction}'] 
+                    # if trial_type != 'GO':
+                    color = self.DIRECTION_COLORS[direction]
+
                     # Create curve
-                    color = ssd_colors['GO'] if trial_type == 'GO' else ssd_colors['combined']
                     psth_curve = hv.Curve(
                         (bin_centers, firing_rate),
                         kdims='Time', 
@@ -853,16 +883,19 @@ class Cell:
                     )
                     
                     # Combine and configure
-                    ssd_label = f" (all SSDs, n={n_trials})" if trial_type != 'GO' else f" (n={n_trials})"
                     smoothed_label = " (smoothed)" if smooth else ""
+                    aligned_to = f'GO + {self.go_trials_stop_cue_alignment_bias} MS' if trial_type == 'GO' else alignment_point
+                    ttl = f"Cell {self.cell_id} - {n_trials} {trial_type} trials - {dir_label} (Success Only)\n" + \
+                            f"PSTH (bin={bin_size}ms{smoothed_label}). Aligned to {aligned_to}" 
                     plot = (psth_curve * zero_line).opts(
                         opts.Curve(
                             xlabel=f'Time from {alignment_point} (ms)',
                             ylabel='Firing Rate (spikes/s)',
-                            title=f"Cell {self.cell_id} - {trial_type} trials - {dir_label} (Success Only){ssd_label}\nPSTH (bin={bin_size}ms{smoothed_label})",
+                            title=ttl,
                             width=800, height=300,
                             show_grid=True,
-                            xlim=(epok[0], epok[1])
+                            xlim=(epok[0], epok[1]),
+                            show_legend=True
                         ),
                         opts.VLine(color='red', line_width=2, line_dash='dashed')
                     )
