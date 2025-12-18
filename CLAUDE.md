@@ -21,6 +21,8 @@
 
 ## Quick Start
 
+**For Python use the local conda env at <project_dir>/.conda**
+
 ### Setup
 ```python
 from cell_analysis import Cell, PopulationAnalyzer
