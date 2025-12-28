@@ -13,6 +13,7 @@ import pandas as pd
 from typing import List, Dict, Optional, Tuple, Union
 from tqdm import tqdm
 from sklearn.decomposition import TruncatedSVD, PCA
+from concurrent.futures import ProcessPoolExecutor
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -26,6 +27,112 @@ if str(_parent_dir) not in sys.path:
     sys.path.insert(0, str(_parent_dir))
 
 from cell_analysis import Cell
+
+
+def _worker_extract_neuron_concat_psths(args):
+    """
+    Worker function for parallel PSTH extraction during fit.
+    Must be at module level for pickling.
+
+    Parameters:
+    -----------
+    args : tuple
+        (cell_id, cell_data_df, trial_specs, bin_size, smooth_ker_size, success_only)
+        Note: cell_data_df is pre-filtered for this specific cell
+
+    Returns:
+    --------
+    tuple : (cell_id, concat_psth, has_all_conditions, trial_counts)
+    """
+    cell_id, cell_data_df, trial_specs, bin_size, smooth_ker_size, success_only = args
+
+    psths = []
+    has_all_conditions = True
+    trial_counts = {}
+
+    # Create Cell object (data already filtered for this cell)
+    cell = Cell(cell_data_df, verbose=False)
+
+    for spec in trial_specs:
+        for direction in spec.get_directions():
+            # Get condition label
+            cond_label = spec.get_label_for_direction(direction)
+
+            # Extract PSTH
+            _, firing_rate, n_trials = cell.calculate_psth(
+                epok=spec.epoch,
+                bin_size=bin_size,
+                alignment_point=spec.alignment,
+                trial_type=spec.trial_type,
+                direction=direction,
+                ssd_number=spec.ssd_number,
+                success_only=success_only,
+                smooth=True,
+                smooth_ker_size=smooth_ker_size,
+                delta=False,
+                normalize_bins=False
+            )
+
+            # Check if we have data
+            if firing_rate is None or n_trials == 0:
+                has_all_conditions = False
+                n_bins = (spec.epoch[1] - spec.epoch[0]) // bin_size
+                firing_rate = np.zeros(n_bins)
+                n_trials = 0
+
+            psths.append(firing_rate)
+            trial_counts[cond_label] = n_trials
+
+    # Concatenate all conditions
+    concat_psth = np.concatenate(psths)
+
+    return cell_id, concat_psth, has_all_conditions, trial_counts
+
+
+def _worker_extract_single_condition_psth(args):
+    """
+    Worker function for parallel PSTH extraction during project.
+    Extracts PSTH for a single cell for a single condition.
+    Must be at module level for pickling.
+
+    Parameters:
+    -----------
+    args : tuple
+        (cell_id, cell_data_df, spec, direction, bin_size, smooth_ker_size, success_only)
+
+    Returns:
+    --------
+    tuple : (cell_id, firing_rate, has_data)
+    """
+    cell_id, cell_data_df, spec, direction, bin_size, smooth_ker_size, success_only = args
+
+    # Create Cell object (data already filtered for this cell)
+    cell = Cell(cell_data_df, verbose=False)
+
+    # Extract PSTH
+    _, firing_rate, n_trials = cell.calculate_psth(
+        epok=spec.epoch,
+        bin_size=bin_size,
+        alignment_point=spec.alignment,
+        trial_type=spec.trial_type,
+        direction=direction,
+        ssd_number=spec.ssd_number,
+        success_only=success_only,
+        smooth=True,
+        smooth_ker_size=smooth_ker_size,
+        delta=False,
+        normalize_bins=False
+    )
+
+    # Check if we have data
+    if firing_rate is None or n_trials == 0:
+        n_bins = (spec.epoch[1] - spec.epoch[0]) // bin_size
+        firing_rate = np.zeros(n_bins)
+        has_data = False
+    else:
+        has_data = True
+
+    return cell_id, firing_rate, has_data
 
 
 class TrialSpec:
@@ -130,7 +237,9 @@ class FlexiblePCA:
                  n_components: int = 5,
                  pca_function = TruncatedSVD,
                  random_state: int = 42,
-                 verbose: bool = True):
+                 verbose: bool = True,
+                 n_jobs: int = -1,
+                 z_score: bool = False):
         """
         Initialize FlexiblePCA.
 
@@ -152,6 +261,14 @@ class FlexiblePCA:
             Random seed
         verbose : bool
             Print progress messages
+        n_jobs : int
+            Number of parallel workers for PSTH extraction
+            1 = sequential processing (default)
+            -1 = use all available CPU cores
+            n > 1 = use n parallel workers
+        z_score : bool
+            If True, normalize by dividing by std (z-scoring)
+            If False, only subtract mean (centering)
         """
         self.cell_df = cell_df
         self.bin_size = bin_size
@@ -161,6 +278,8 @@ class FlexiblePCA:
         self.pca_function = pca_function
         self.random_state = random_state
         self.verbose = verbose
+        self.n_jobs = n_jobs
+        self.z_score = z_score
 
         # To be set during fit
         self.pca_model = None
@@ -292,15 +411,51 @@ class FlexiblePCA:
         neurons_complete = []
         all_trial_counts = []
 
-        for cell_id in tqdm(cell_ids, desc="Processing cells", disable=not self.verbose):
-            concat_psth, has_all, trial_counts = self._extract_neuron_concat_psths(
-                cell_id, trial_specs
-            )
+        # Choose parallel or sequential processing
+        if self.n_jobs == 1:
+            # Sequential processing (original implementation)
+            for cell_id in tqdm(cell_ids, desc="Processing cells", disable=not self.verbose):
+                concat_psth, has_all, trial_counts = self._extract_neuron_concat_psths(
+                    cell_id, trial_specs
+                )
 
-            neurons_data.append(concat_psth)
-            neurons_ids.append(cell_id)
-            neurons_complete.append(has_all)
-            all_trial_counts.append(trial_counts)
+                neurons_data.append(concat_psth)
+                neurons_ids.append(cell_id)
+                neurons_complete.append(has_all)
+                all_trial_counts.append(trial_counts)
+        else:
+            # Parallel processing using ProcessPoolExecutor
+            import os
+            n_workers = os.cpu_count() if self.n_jobs == -1 else self.n_jobs
+            self._print(f"  Using {n_workers} parallel workers")
+
+            # Pre-filter data for each cell to reduce pickling overhead
+            self._print("  Pre-filtering cell data...")
+            worker_args = []
+            for cell_id in cell_ids:
+                cell_data = self.cell_df[self.cell_df['cell_ID'] == cell_id]
+                worker_args.append((
+                    cell_id, cell_data, trial_specs, self.bin_size,
+                    self.smooth_ker_size, self.success_only
+                ))
+
+            # Process in parallel with chunking to reduce task scheduling overhead
+            # Chunksize helps balance overhead vs parallelism
+            chunksize = max(1, len(cell_ids) // (n_workers * 4))
+            with ProcessPoolExecutor(max_workers=n_workers) as executor:
+                results = list(tqdm(
+                    executor.map(_worker_extract_neuron_concat_psths, worker_args, chunksize=chunksize),
+                    total=len(cell_ids),
+                    desc="Processing cells",
+                    disable=not self.verbose
+                ))
+
+            # Unpack results
+            for cell_id, concat_psth, has_all, trial_counts in results:
+                neurons_data.append(concat_psth)
+                neurons_ids.append(cell_id)
+                neurons_complete.append(has_all)
+                all_trial_counts.append(trial_counts)
 
         # Convert to arrays
         X_raw_all = np.array(neurons_data)
@@ -331,28 +486,35 @@ class FlexiblePCA:
                         self._print(f"  {cond_label:15s}: mean={np.mean(counts):.1f}, "
                                   f"min={np.min(counts)}, max={np.max(counts)}")
 
-        # Normalize (z-score per neuron)
-        self._print("\nNormalizing data (z-scoring per neuron)...")
-        self.X_fit_normalized = np.zeros_like(self.X_fit_raw)
-        self.normalization_stats = {'mean': [], 'std': []}
+        # Normalize (z-score or center per neuron)
+        norm_type = "z-scoring" if self.z_score else "centering (mean subtraction)"
+        self._print(f"\nNormalizing data ({norm_type} per neuron)...")
 
-        for i in range(n_cells):
-            neuron_data = self.X_fit_raw[i, :]
-            mean = np.mean(neuron_data)
-            std = np.std(neuron_data)
+        # Vectorized normalization - compute stats for all neurons at once
+        means = np.mean(self.X_fit_raw, axis=1, keepdims=True)  # Shape: (n_cells, 1)
+        stds = np.std(self.X_fit_raw, axis=1, keepdims=True)    # Shape: (n_cells, 1)
 
-            self.normalization_stats['mean'].append(mean)
-            self.normalization_stats['std'].append(std)
+        # Store stats (squeeze to 1D for compatibility)
+        self.normalization_stats = {
+            'mean': means.squeeze(),
+            'std': stds.squeeze()
+        }
 
-            # Z-score (handle zero std case)
-            if std > 0:
-                self.X_fit_normalized[i, :] = (neuron_data - mean) / std
-            else:
-                self.X_fit_normalized[i, :] = 0
+        # Normalize: subtract mean, optionally divide by std
+        self.X_fit_normalized = self.X_fit_raw - means
+
+        if self.z_score:
+            # Z-score: handle zero std case by setting to zero
+            # Avoid division by zero using np.where
+            self.X_fit_normalized = np.where(
+                stds > 0,
+                self.X_fit_normalized / stds,
+                0
+            )
 
         self._print(f"✓ Normalization complete")
-        self._print(f"  Mean firing rate: {np.mean(self.normalization_stats['mean']):.2f} ± "
-                   f"{np.std(self.normalization_stats['mean']):.2f} spikes/sec")
+        self._print(f"  Mean firing rate: {np.mean(means):.2f} ± "
+                   f"{np.std(means):.2f} spikes/sec")
         self._print(f"  Normalized data: mean={np.mean(self.X_fit_normalized):.6f}, "
                    f"std={np.std(self.X_fit_normalized):.3f}")
 
@@ -428,23 +590,55 @@ class FlexiblePCA:
                 cond_label = spec.get_label_for_direction(direction)
 
                 # Extract PSTHs for this specific condition
-                condition_psths = []
-                has_data_mask = []
+                if self.n_jobs == 1:
+                    # Sequential processing
+                    condition_psths = []
+                    has_data_mask = []
 
-                for cell_id in tqdm(self.cell_ids,
-                                   desc=f"Processing {cond_label}",
-                                   disable=not self.verbose):
-                    firing_rate, n_trials = self._extract_psth_for_spec(cell_id, spec, direction)
+                    for cell_id in tqdm(self.cell_ids,
+                                       desc=f"Processing {cond_label}",
+                                       disable=not self.verbose):
+                        firing_rate, n_trials = self._extract_psth_for_spec(cell_id, spec, direction)
 
-                    # Check if we have data
-                    if firing_rate is None or n_trials == 0:
-                        n_bins = (spec.epoch[1] - spec.epoch[0]) // self.bin_size
-                        firing_rate = np.zeros(n_bins)
-                        has_data_mask.append(False)
-                    else:
-                        has_data_mask.append(True)
+                        # Check if we have data
+                        if firing_rate is None or n_trials == 0:
+                            n_bins = (spec.epoch[1] - spec.epoch[0]) // self.bin_size
+                            firing_rate = np.zeros(n_bins)
+                            has_data_mask.append(False)
+                        else:
+                            has_data_mask.append(True)
 
-                    condition_psths.append(firing_rate)
+                        condition_psths.append(firing_rate)
+                else:
+                    # Parallel processing
+                    import os
+                    n_workers = os.cpu_count() if self.n_jobs == -1 else self.n_jobs
+
+                    # Pre-filter data for each cell
+                    worker_args = []
+                    for cell_id in self.cell_ids:
+                        cell_data = self.cell_df[self.cell_df['cell_ID'] == cell_id]
+                        worker_args.append((
+                            cell_id, cell_data, spec, direction, self.bin_size,
+                            self.smooth_ker_size, self.success_only
+                        ))
+
+                    # Process in parallel
+                    chunksize = max(1, len(self.cell_ids) // (n_workers * 4))
+                    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+                        results = list(tqdm(
+                            executor.map(_worker_extract_single_condition_psth, worker_args, chunksize=chunksize),
+                            total=len(self.cell_ids),
+                            desc=f"Processing {cond_label}",
+                            disable=not self.verbose
+                        ))
+
+                    # Unpack results (maintain order by cell_ids)
+                    condition_psths = []
+                    has_data_mask = []
+                    for cell_id, firing_rate, has_data in results:
+                        condition_psths.append(firing_rate)
+                        has_data_mask.append(has_data)
 
                 # Convert to array (neurons × time_bins)
                 X_condition = np.array(condition_psths)
@@ -453,16 +647,21 @@ class FlexiblePCA:
                 self._print(f"  {cond_label}: {has_data_mask.sum()}/{len(has_data_mask)} "
                           f"neurons have data")
 
-                # Normalize using same stats as fit data
-                X_condition_normalized = np.zeros_like(X_condition)
-                for i in range(len(self.cell_ids)):
-                    mean = self.normalization_stats['mean'][i]
-                    std = self.normalization_stats['std'][i]
+                # Normalize using same stats as fit data (vectorized)
+                means = self.normalization_stats['mean'][:, np.newaxis]  # Shape: (n_cells, 1)
+                stds = self.normalization_stats['std'][:, np.newaxis]    # Shape: (n_cells, 1)
 
-                    if std > 0:
-                        X_condition_normalized[i, :] = (X_condition[i, :] - mean) / std
-                    else:
-                        X_condition_normalized[i, :] = 0
+                # Subtract mean
+                X_condition_normalized = X_condition - means
+
+                # Optionally divide by std (z-score)
+                if self.z_score:
+                    # Handle zero std case
+                    X_condition_normalized = np.where(
+                        stds > 0,
+                        X_condition_normalized / stds,
+                        0
+                    )
 
                 # Project onto PCs
                 # PCA components: (n_components, n_features_fit)
@@ -581,8 +780,13 @@ if __name__ == '__main__':
     # Load data
     cell_df = pd.read_pickle('../../data/unified_cell_trial_data/msn_fiona_cell_trial_data.pkl')
 
-    # Create PCA analyzer
-    fpca = FlexiblePCA(cell_df, n_components=5)
+    # Create PCA analyzer with parallel processing and z-scoring
+    fpca = FlexiblePCA(
+        cell_df,
+        n_components=5,
+        n_jobs=-1,      # Use all CPU cores for parallel processing
+        z_score=True    # Z-score normalization (default)
+    )
 
     # Fit on GO trials only
     fit_specs = [

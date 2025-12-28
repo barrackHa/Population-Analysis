@@ -15,6 +15,7 @@
 - **[API Reference](docs/API_REFERENCE.md)** - Cell & Session classes, methods, parameters
 - **[Workflows & Usage Patterns](docs/WORKFLOWS.md)** - Common analysis patterns with code examples
 - **[PCA Analysis Guide](docs/PCA_GUIDE.md)** - Complete PCA workflow for population dynamics
+- **[FlexiblePCA Guide](docs/FLEXIBLE_PCA_GUIDE.md)** - Advanced PCA with flexible conditions, parallel processing, optimizations
 - **[Coding & Visualization Standards](docs/STANDARDS.md)** - Guidelines, best practices, conventions
 
 ---
@@ -55,10 +56,9 @@ session.plot_trial_type_PSTH_comparison(epok_go=[-200, 700], bin_size=10)
 ```
 
 ### PCA Analysis
-```python
-# Single-session PCA
-train, test = session.split_to_train_test(test_fraction=0.5, random_state=42)
 
+#### Traditional Multi-Session PCA
+```python
 # Multi-session PCA
 from multi_session_pca import MultiSessionPCA
 analyzer = MultiSessionPCA(config)
@@ -71,6 +71,35 @@ analyzer.fit_and_project(n_components=5)
 analyzer.plot_3d_trajectory()  # Shows test data by default
 
 # See PCA_GUIDE.md for complete workflow
+```
+
+#### FlexiblePCA (Optimized, Flexible Conditions)
+```python
+from flexible_pca import FlexiblePCA, TrialSpec
+
+# Create analyzer with parallel processing
+fpca = FlexiblePCA(
+    cell_df,
+    n_components=5,
+    n_jobs=-1,      # Use all CPU cores (~5-7x speedup)
+    z_score=False   # Centering only (or True for z-scoring)
+)
+
+# Fit on GO trials only
+fit_specs = [
+    TrialSpec('GO', direction=0, epoch=[-50, 300], alignment='go_cue'),
+    TrialSpec('GO', direction=180, epoch=[-50, 300], alignment='go_cue'),
+]
+fpca.fit(fit_specs)
+
+# Project STOP and CONT trials onto GO-defined space
+proj_specs = [
+    TrialSpec('STOP', direction=0, epoch=[-50, 300], alignment='go_cue', ssd_number=2),
+    TrialSpec('CONT', direction=0, epoch=[-50, 300], alignment='go_cue', ssd_number=2),
+]
+projections = fpca.project(proj_specs)
+
+# See FLEXIBLE_PCA_GUIDE.md for advanced usage
 ```
 
 ---
@@ -101,6 +130,13 @@ MultiSessionPCA (multi_session_pca.py)
 ├── Train/test split support (optional)
 ├── PCA fitting and projection
 └── 3D/2D trajectory visualizations
+
+FlexiblePCA (flexiable_pca/flexible_pca.py)
+├── Flexible condition-based PCA
+├── Parallel processing (fit & project)
+├── Vectorized normalization
+├── Arbitrary epoch/alignment selection
+└── Optimized for large datasets (~5-7x speedup)
 ```
 
 ---
