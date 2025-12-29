@@ -10,6 +10,8 @@ Date: December 2024
 
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 from typing import List, Dict, Optional, Tuple, Union
 from tqdm import tqdm
 from sklearn.decomposition import TruncatedSVD, PCA
@@ -720,6 +722,419 @@ class FlexiblePCA:
         """
         n_bins = (spec.epoch[1] - spec.epoch[0]) // self.bin_size
         return np.linspace(spec.epoch[0], spec.epoch[1], n_bins, endpoint=False)
+
+    def compute_mean_ssd(self, ssd_number: int = 2) -> float:
+        """
+        Compute mean SSD time for STOP trials.
+
+        Parameters:
+        -----------
+        ssd_number : int
+            SSD number to use (default: 2)
+
+        Returns:
+        --------
+        mean_ssd_ms : float
+            Mean SSD time in milliseconds
+        """
+        stop_trials = self.cell_df[
+            (self.cell_df['type'] == 'STOP') &
+            (self.cell_df['ssd_number'] == ssd_number) &
+            (self.cell_df['trial_failed'] == False)
+        ]
+
+        if len(stop_trials) == 0:
+            return None
+
+        return stop_trials['ssd_len'].mean()
+
+    def plot_3d_trajectories(self,
+                             trajectories_dict: Dict[str, np.ndarray],
+                             time_axes_dict: Optional[Dict[str, np.ndarray]] = None,
+                             marker_time_ms: Optional[float] = None,
+                             marker_label: str = 'Mean SSD',
+                             show_ssd_marker: bool = True,
+                             ssd_number: int = 2,
+                             title: Optional[str] = None,
+                             figsize: Tuple[int, int] = (16, 12)):
+        """
+        Plot 3D trajectories in PC space.
+
+        Parameters:
+        -----------
+        trajectories_dict : dict
+            Dictionary mapping condition labels to trajectories (n_components, n_time_bins)
+        time_axes_dict : dict, optional
+            Dictionary mapping condition labels to time axes (for markers)
+        marker_time_ms : float, optional
+            Time in milliseconds to mark with a diamond (overrides show_ssd_marker)
+        marker_label : str
+            Label for the marker (default: 'Mean SSD')
+        show_ssd_marker : bool
+            If True, automatically compute and show mean SSD marker (default: True)
+        ssd_number : int
+            SSD number to use for mean SSD calculation (default: 2)
+        title : str, optional
+            Plot title
+        figsize : tuple
+            Figure size (default: (16, 12))
+
+        Returns:
+        --------
+        fig, ax : matplotlib figure and axis
+        """
+        if self.pca_model is None:
+            raise ValueError("Must call fit() before plotting")
+
+        # Auto-compute mean SSD if requested and marker_time_ms not provided
+        if marker_time_ms is None and show_ssd_marker:
+            marker_time_ms = self.compute_mean_ssd(ssd_number)
+
+        fig = plt.figure(figsize=figsize)
+        ax = fig.add_subplot(111, projection='3d')
+
+        # Standard color/linestyle configuration
+        plot_config = {
+            'GO_R': ('cyan', 'GO Right', '-'),
+            'GO_L': ('blue', 'GO Left', '--'),
+            'STOP_R': ('orange', 'STOP Right', '-'),
+            'STOP_L': ('red', 'STOP Left', '--'),
+            'CONT_R': ('lime', 'CONT Right', '-'),
+            'CONT_L': ('green', 'CONT Left', '--'),
+        }
+
+        # Plot trajectories
+        for label, traj in trajectories_dict.items():
+            # Get plot configuration or use defaults
+            if label in plot_config:
+                color, display_label, linestyle = plot_config[label]
+            else:
+                color, display_label, linestyle = 'gray', label, '-'
+
+            ax.plot(traj[0, :], traj[1, :], traj[2, :],
+                   label=display_label, color=color, linewidth=2,
+                   alpha=0.7, linestyle=linestyle)
+
+            # Mark start and end points
+            ax.scatter(traj[0, 0], traj[1, 0], traj[2, 0],
+                      marker='o', s=80, color=color,
+                      edgecolors='black', linewidths=1.5, alpha=0.8)
+            ax.scatter(traj[0, -1], traj[1, -1], traj[2, -1],
+                      marker='s', s=80, color=color,
+                      edgecolors='black', linewidths=1.5, alpha=0.8)
+
+            # Add time marker if requested
+            if marker_time_ms is not None and time_axes_dict is not None:
+                time_axis = time_axes_dict.get(label)
+                if time_axis is not None:
+                    time_idx = np.argmin(np.abs(time_axis - marker_time_ms))
+                    ax.scatter(traj[0, time_idx], traj[1, time_idx], traj[2, time_idx],
+                              marker='D', s=100, color=color,
+                              edgecolors='black', linewidths=1.5, alpha=0.9, zorder=10)
+
+        # Labels
+        var_ratios = self.pca_model.explained_variance_ratio_
+        ax.set_xlabel(f'PC1 ({var_ratios[0]*100:.1f}%)', fontsize=12, fontweight='bold')
+        ax.set_ylabel(f'PC2 ({var_ratios[1]*100:.1f}%)', fontsize=12, fontweight='bold')
+        ax.set_zlabel(f'PC3 ({var_ratios[2]*100:.1f}%)', fontsize=12, fontweight='bold')
+
+        if title:
+            ax.set_title(title, fontsize=14, fontweight='bold')
+        elif marker_time_ms is not None:
+            ax.set_title(f'Neural Trajectories in PC Space\n'
+                        f'Circle=start, Square=end, Diamond={marker_label} ({marker_time_ms:.1f} ms)',
+                        fontsize=14, fontweight='bold')
+        else:
+            ax.set_title('Neural Trajectories in PC Space\nCircle=start, Square=end',
+                        fontsize=14, fontweight='bold')
+
+        ax.legend(fontsize=10, loc='upper left')
+        plt.tight_layout()
+
+        return fig, ax
+
+    def plot_2d_projections(self,
+                           trajectories_dict: Dict[str, np.ndarray],
+                           time_axes_dict: Optional[Dict[str, np.ndarray]] = None,
+                           marker_time_ms: Optional[float] = None,
+                           marker_label: str = 'Mean SSD',
+                           show_ssd_marker: bool = True,
+                           ssd_number: int = 2,
+                           n_pcs: int = 3,
+                           title: Optional[str] = None,
+                           figsize: Tuple[int, int] = (16, 16)):
+        """
+        Plot matrix of 2D projections showing all pairwise PC combinations.
+
+        Parameters:
+        -----------
+        trajectories_dict : dict
+            Dictionary mapping condition labels to trajectories (n_components, n_time_bins)
+        time_axes_dict : dict, optional
+            Dictionary mapping condition labels to time axes (for markers)
+        marker_time_ms : float, optional
+            Time in milliseconds to mark (overrides show_ssd_marker)
+        marker_label : str
+            Label for the marker (default: 'Mean SSD')
+        show_ssd_marker : bool
+            If True, automatically compute and show mean SSD marker (default: True)
+        ssd_number : int
+            SSD number to use for mean SSD calculation (default: 2)
+        n_pcs : int
+            Number of PCs to visualize (default: 3)
+        title : str, optional
+            Overall figure title
+        figsize : tuple
+            Figure size (default: (16, 16))
+
+        Returns:
+        --------
+        fig, axes : matplotlib figure and axes array
+        """
+        if self.pca_model is None:
+            raise ValueError("Must call fit() before plotting")
+
+        # Auto-compute mean SSD if requested and marker_time_ms not provided
+        if marker_time_ms is None and show_ssd_marker:
+            marker_time_ms = self.compute_mean_ssd(ssd_number)
+
+        fig, axes = plt.subplots(n_pcs, n_pcs, figsize=figsize)
+
+        # Standard color/linestyle configuration
+        plot_config = {
+            'GO_R': ('cyan', 'GO Right', '-'),
+            'GO_L': ('blue', 'GO Left', '--'),
+            'STOP_R': ('orange', 'STOP Right', '-'),
+            'STOP_L': ('red', 'STOP Left', '--'),
+            'CONT_R': ('lime', 'CONT Right', '-'),
+            'CONT_L': ('green', 'CONT Left', '--'),
+        }
+
+        var_ratios = self.pca_model.explained_variance_ratio_
+
+        for i in range(n_pcs):
+            for j in range(n_pcs):
+                ax = axes[i, j]
+
+                if i == j:
+                    # Diagonal: show PC index and variance
+                    ax.text(0.5, 0.5, f'PC{i+1}\n{var_ratios[i]*100:.1f}%',
+                           ha='center', va='center', fontsize=14, fontweight='bold')
+                    ax.set_xlim(0, 1)
+                    ax.set_ylim(0, 1)
+                    ax.axis('off')
+                else:
+                    # Off-diagonal: plot trajectories
+                    for label, traj in trajectories_dict.items():
+                        # Get plot config
+                        if label in plot_config:
+                            color, display_label, linestyle = plot_config[label]
+                        else:
+                            color, display_label, linestyle = 'gray', label, '-'
+
+                        ax.plot(traj[j, :], traj[i, :],
+                               label=display_label, color=color, linewidth=1.2,
+                               alpha=0.6, linestyle=linestyle)
+
+                        # Mark start points
+                        ax.scatter(traj[j, 0], traj[i, 0],
+                                  marker='o', s=30, color=color, edgecolors='black',
+                                  linewidths=0.5, zorder=5, alpha=0.7)
+
+                        # Add time marker if requested
+                        if marker_time_ms is not None and time_axes_dict is not None:
+                            time_axis = time_axes_dict.get(label)
+                            if time_axis is not None:
+                                time_idx = np.argmin(np.abs(time_axis - marker_time_ms))
+                                ax.scatter(traj[j, time_idx], traj[i, time_idx],
+                                          marker='D', s=40, color=color,
+                                          edgecolors='black', linewidths=0.8,
+                                          zorder=10, alpha=0.8)
+
+                    ax.grid(alpha=0.3)
+
+                    # Labels only on edges
+                    if i == n_pcs - 1:
+                        ax.set_xlabel(f'PC{j+1}', fontsize=10)
+                    if j == 0:
+                        ax.set_ylabel(f'PC{i+1}', fontsize=10)
+
+                    # Legend only on top-right
+                    if i == 0 and j == n_pcs - 1:
+                        ax.legend(fontsize=7, loc='upper right', framealpha=0.8)
+                        if marker_time_ms is not None:
+                            ax.text(0.98, 0.02,
+                                   f'◆ = {marker_label} ({marker_time_ms:.1f} ms)',
+                                   transform=ax.transAxes, fontsize=7,
+                                   ha='right', va='bottom',
+                                   bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+        if title:
+            fig.suptitle(title, fontsize=16, fontweight='bold', y=0.995)
+
+        plt.tight_layout()
+        return fig, axes
+
+    def plot_pc_timeseries(self,
+                          trajectories_dict: Dict[str, np.ndarray],
+                          time_axes_dict: Dict[str, np.ndarray],
+                          marker_time_ms: Optional[float] = None,
+                          marker_label: str = 'Mean SSD',
+                          show_ssd_marker: bool = True,
+                          ssd_number: int = 2,
+                          n_pcs: int = 3,
+                          title: Optional[str] = None,
+                          figsize: Tuple[int, int] = (16, 12)):
+        """
+        Plot PC time series showing how each PC varies over time.
+
+        Parameters:
+        -----------
+        trajectories_dict : dict
+            Dictionary mapping condition labels to trajectories (n_components, n_time_bins)
+        time_axes_dict : dict
+            Dictionary mapping condition labels to time axes
+        marker_time_ms : float, optional
+            Time in milliseconds to mark with vertical line (overrides show_ssd_marker)
+        marker_label : str
+            Label for the marker (default: 'Mean SSD')
+        show_ssd_marker : bool
+            If True, automatically compute and show mean SSD marker (default: True)
+        ssd_number : int
+            SSD number to use for mean SSD calculation (default: 2)
+        n_pcs : int
+            Number of PCs to visualize (default: 3)
+        title : str, optional
+            Overall figure title
+        figsize : tuple
+            Figure size (default: (16, 12))
+
+        Returns:
+        --------
+        fig, axes : matplotlib figure and axes array
+        """
+        if self.pca_model is None:
+            raise ValueError("Must call fit() before plotting")
+
+        # Auto-compute mean SSD if requested and marker_time_ms not provided
+        if marker_time_ms is None and show_ssd_marker:
+            marker_time_ms = self.compute_mean_ssd(ssd_number)
+
+        fig, axes = plt.subplots(n_pcs, 1, figsize=figsize)
+
+        # Ensure axes is always an array
+        if n_pcs == 1:
+            axes = [axes]
+
+        # Standard color/linestyle configuration
+        plot_config = {
+            'GO_R': ('cyan', 'GO Right', '-'),
+            'GO_L': ('blue', 'GO Left', '--'),
+            'STOP_R': ('orange', 'STOP Right', '-'),
+            'STOP_L': ('red', 'STOP Left', '--'),
+            'CONT_R': ('lime', 'CONT Right', '-'),
+            'CONT_L': ('green', 'CONT Left', '--'),
+        }
+
+        var_ratios = self.pca_model.explained_variance_ratio_
+
+        for i in range(n_pcs):
+            ax = axes[i]
+
+            # Plot trajectories
+            for label, traj in trajectories_dict.items():
+                time_axis = time_axes_dict[label]
+
+                # Get plot config
+                if label in plot_config:
+                    color, display_label, linestyle = plot_config[label]
+                else:
+                    color, display_label, linestyle = 'gray', label, '-'
+
+                ax.plot(time_axis, traj[i, :], label=display_label,
+                       color=color, linewidth=2, alpha=0.7, linestyle=linestyle)
+
+            # Formatting
+            ax.axhline(0, color='gray', linestyle='--', alpha=0.3)
+            ax.axvline(0, color='black', linestyle=':', alpha=0.5, linewidth=1.5)
+
+            # Add time marker if requested
+            if marker_time_ms is not None:
+                ax.axvline(marker_time_ms, color='red', linestyle='--', alpha=0.7,
+                          linewidth=2, label=f'{marker_label} ({marker_time_ms:.1f} ms)')
+
+            ax.set_ylabel(f'PC{i+1}\n({var_ratios[i]*100:.1f}%)',
+                         fontsize=11, fontweight='bold')
+            ax.legend(loc='upper right', fontsize=8, ncol=2, framealpha=0.9)
+            ax.grid(alpha=0.3)
+
+            if i == 0 and title:
+                ax.set_title(title, fontsize=14, fontweight='bold')
+            if i == n_pcs - 1:
+                ax.set_xlabel('Time (ms)', fontsize=11)
+
+        plt.tight_layout()
+        return fig, axes
+
+    def plot_explained_variance(self,
+                                title: Optional[str] = None,
+                                figsize: Tuple[int, int] = (14, 5)):
+        """
+        Plot explained variance analysis (scree plot and cumulative variance).
+
+        Parameters:
+        -----------
+        title : str, optional
+            Overall figure title
+        figsize : tuple
+            Figure size (default: (14, 5))
+
+        Returns:
+        --------
+        fig, axes : matplotlib figure and axes array
+        """
+        if self.pca_model is None:
+            raise ValueError("Must call fit() before plotting")
+
+        fig, axes = plt.subplots(1, 2, figsize=figsize)
+
+        # Get explained variance ratio
+        explained_var = self.pca_model.explained_variance_ratio_
+        n_components = len(explained_var)
+
+        # Scree plot
+        axes[0].bar(range(1, n_components + 1),
+                   explained_var * 100,
+                   alpha=0.7, color='steelblue')
+        axes[0].set_xlabel('Principal Component')
+        axes[0].set_ylabel('Explained Variance (%)')
+        axes[0].set_title('Scree Plot')
+        axes[0].grid(axis='y', alpha=0.3)
+
+        # Cumulative variance
+        cumvar = np.cumsum(explained_var) * 100
+        axes[1].plot(range(1, n_components + 1), cumvar,
+                    marker='o', linewidth=2, markersize=8, color='darkred')
+        axes[1].axhline(90, color='gray', linestyle='--', alpha=0.5, label='90%')
+        axes[1].set_xlabel('Principal Component')
+        axes[1].set_ylabel('Cumulative Explained Variance (%)')
+        axes[1].set_title('Cumulative Variance Explained')
+        axes[1].legend()
+        axes[1].grid(alpha=0.3)
+
+        if title:
+            fig.suptitle(title, fontsize=14, fontweight='bold')
+
+        plt.tight_layout()
+
+        # Print summary
+        if self.verbose:
+            print(f"\nExplained variance by component:")
+            for i, var in enumerate(explained_var):
+                print(f"  PC{i+1}: {var*100:.2f}%")
+            print(f"\nTotal variance explained by {n_components} components: {cumvar[-1]:.2f}%")
+
+        return fig, axes
 
 
 def create_standard_specs(go_epok: List[int] = [-50, 300],
