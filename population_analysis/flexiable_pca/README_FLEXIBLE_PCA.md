@@ -198,6 +198,16 @@ proj_traj = fpca.project(proj_specs)
 # Combine
 all_traj = {**fit_traj, **proj_traj}
 
+# Calculate mean SSD time (for STOP/CONT trials)
+ssd_number = 2  # Adjust to match your trial specs
+stop_trials_mask = (
+    (cell_df['type'] == 'STOP') &
+    (cell_df['trial_failed'] == False) &
+    (cell_df['ssd_number'] == ssd_number)
+)
+mean_ssd = int(cell_df.loc[stop_trials_mask, 'ssd_len'].mean())
+print(f"Mean SSD: {mean_ssd} ms")
+
 # Plot
 fig = plt.figure(figsize=(16, 12))
 ax = fig.add_subplot(111, projection='3d')
@@ -210,11 +220,20 @@ for label, traj in all_traj.items():
     ax.plot(traj[0, :], traj[1, :], traj[2, :],
             label=label, color=color, linewidth=2, alpha=0.7)
 
+    # Mark mean SSD point on STOP/CONT trajectories
+    if 'STOP' in label or 'CONT' in label:
+        time_axis = fpca.get_time_axis(proj_specs[0])
+        ssd_idx = np.argmin(np.abs(time_axis - mean_ssd))
+        ax.scatter(traj[0, ssd_idx], traj[1, ssd_idx], traj[2, ssd_idx],
+                  marker='o', s=100, color='black', edgecolors='white',
+                  linewidths=2, zorder=10, label='_nolegend_')
+
 var_ratios = fpca.pca_model.explained_variance_ratio_
 ax.set_xlabel(f'PC1 ({var_ratios[0]*100:.1f}%)')
 ax.set_ylabel(f'PC2 ({var_ratios[1]*100:.1f}%)')
 ax.set_zlabel(f'PC3 ({var_ratios[2]*100:.1f}%)')
 ax.legend()
+ax.set_title(f'Neural Trajectories (Mean SSD: {mean_ssd} ms)')
 plt.show()
 ```
 
@@ -223,6 +242,15 @@ plt.show()
 ```python
 # Get time axis
 time_axis = fpca.get_time_axis(fit_specs[0])
+
+# Calculate mean SSD time (if not already calculated above)
+ssd_number = 2
+stop_trials_mask = (
+    (cell_df['type'] == 'STOP') &
+    (cell_df['trial_failed'] == False) &
+    (cell_df['ssd_number'] == ssd_number)
+)
+mean_ssd = int(cell_df.loc[stop_trials_mask, 'ssd_len'].mean())
 
 # Plot
 fig, axes = plt.subplots(3, 1, figsize=(16, 12))
@@ -235,11 +263,15 @@ for i in range(3):  # First 3 PCs
         ax.plot(time_axis, traj[i, :], label=label, color=color, linewidth=2)
 
     ax.set_ylabel(f'PC{i+1}')
-    ax.axvline(0, color='black', linestyle=':', alpha=0.5)
+    ax.axvline(0, color='black', linestyle=':', alpha=0.5, label='Go cue')
+    ax.axvline(mean_ssd, color='red', linestyle='--', alpha=0.7,
+               linewidth=2, label=f'Mean SSD ({mean_ssd} ms)')
     ax.axhline(0, color='gray', linestyle='--', alpha=0.3)
     ax.legend()
+    ax.grid(alpha=0.3)
 
 axes[-1].set_xlabel('Time (ms)')
+plt.suptitle('PC Trajectories Over Time', fontsize=14, fontweight='bold')
 plt.tight_layout()
 plt.show()
 ```
