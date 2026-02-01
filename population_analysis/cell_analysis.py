@@ -16,6 +16,7 @@ Date: October 2025
 import pandas as pd
 import numpy as np
 import holoviews as hv
+import hvplot.pandas  # noqa: F401
 from holoviews import opts
 from scipy.ndimage import gaussian_filter1d
 from scipy.stats import zscore
@@ -40,7 +41,7 @@ class Cell:
     }  # Different colors for each SSD
     
     
-    def __init__(self, cell_df, verbose=False, go_trials_stop_cue_alignment_bias=150):
+    def __init__(self, cell_df: pd.DataFrame, verbose=False, go_trials_stop_cue_alignment_bias=150):
         """
         Initialize MSN cell with its trial data.
         
@@ -341,7 +342,11 @@ class Cell:
             self.SSD_COLORS[key] for key in range(1,5)
         ]
         
-        overlay *= spikes_arr.hvplot.heatmap(x='columns', y='index').opts(
+        # Melt DataFrame and ensure x-axis values are numeric (fixes HoloViews string diff error)
+        spikes_melted = spikes_arr.reset_index().melt(id_vars='index', var_name='time', value_name='value')
+        spikes_melted['time'] = spikes_melted['time'].astype(float)
+        
+        overlay *= spikes_melted.hvplot.heatmap(x='time', y='index', C='value').opts(
             cmap=colors, colorbar=False, width=800, height=600
         )
 
@@ -360,7 +365,6 @@ class Cell:
                 xlim=(epok[0], epok[1])
             )
         )
-        
         return plot
     
     def plot_raster_by_type_direction(self, epok=[-200, 500], 
@@ -570,6 +574,56 @@ class Cell:
         # Apply Gaussian smoothing if requested
         if smooth:
             firing_rate = gaussian_filter1d(firing_rate, sigma=smooth_ker_size)
+            # def pani_sdf_kernel(tau_g=1.0, tau_d=20.0, duration=20.0, dt=1.0):
+            #     """
+            #     Create the Pani et al. 2022 spike density function kernel.
+                
+            #     K(t) = [1 - exp(-t/τg)] × exp(-t/τd)
+                
+            #     Parameters:
+            #     -----------
+            #     tau_g : float
+            #         Growth time constant (ms), default 1.0 ms
+            #     tau_d : float
+            #         Decay time constant (ms), default 20.0 ms
+            #     duration : float
+            #         Duration of kernel (ms), default 20 ms
+            #     dt : float
+            #         Time step (ms), default 1.0 ms
+                
+            #     Returns:
+            #     --------
+            #     t : ndarray
+            #         Time array
+            #     kernel : ndarray
+            #         Kernel values (normalized to sum to 1)
+            #     """
+            #     t = np.arange(0, duration, dt)
+                
+            #     # Compute kernel: K(t) = [1 - exp(-t/τg)] × exp(-t/τd)
+            #     kernel = (1 - np.exp(-t / tau_g)) * np.exp(-t / tau_d)
+                
+            #     # Normalize so kernel sums to 1 (preserves spike count)
+            #     kernel = kernel / np.sum(kernel)
+                
+            #     return t, kernel
+
+
+            # # Create and visualize the kernel
+            # tau_g = 1.0  # ms
+            # tau_d = 20.0  # ms
+            # kernel_duration = 20.0  # ms (compact kernel for sharper temporal resolution)
+            # dt = 1.0  # ms
+
+            # _, kernel = pani_sdf_kernel(tau_g=tau_g, tau_d=tau_d, duration=kernel_duration, dt=dt)
+    
+            # # Convolve spike train with kernel (CAUSAL)
+            # # mode='full' gives output of length N+M-1
+            # # Taking [:len(spike_train)] makes it causal: spike affects its own time and future
+            # sdf_full = np.convolve(firing_rate, kernel, mode='full')
+            # firing_rate = sdf_full[:len(firing_rate)]  # Causal: only take first N elements
+            
+
         
         # remove edges affected by smoothing
         bin_centers = bin_centers[smooth_ker_size : -smooth_ker_size]
