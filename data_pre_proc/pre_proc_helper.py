@@ -39,19 +39,32 @@ class single_trial:
     def data_dict(self):
         # iterate over all attributes and return as dictionary
         atrrs = [atrr for atrr in dir(self) if not atrr.startswith("__") and not callable(atrr)]
-        [
-            atrrs.remove(func) for func in [
+        funcs_list = [
                 'data_dict', 'get_file_data', 
                 'extract_trial_info_from_trial_name', 'plot_behavior',
                 'get_saccades', 'get_first_relevant_saccade',
                 'from_dict', 'POS_NORMALIZER', 'VEL_NORMALIZER',
-                '_single_trial__first_relevant_saccade',
+                # '_single_trial__first_relevant_saccade',
                 'compute_reaction_time'
-        ]]
+        ]
+
+        for func in funcs_list:
+            try:
+                atrrs.remove(func)
+            except ValueError:
+                print(f"Attribute {func} not found in attributes list")
+                raise
+        
+        try:
+            atrrs.remove('_single_trial__first_relevant_saccade')
+        except ValueError:
+            atrrs.remove('first_relevant_saccade')
+
         data_dict = {
             attr: getattr(self, attr) 
             for attr in atrrs
         }
+
         full_path = self.file_path.parts
         data_dir_idx = full_path.index('data')
         data_dict['file_path'] = str(Path(*full_path[data_dir_idx:]))
