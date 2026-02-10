@@ -195,7 +195,7 @@ class Cell:
                 f"Trials: {len(self.data)} | Directions: {self.directions} | "
                 f"Trial Types: {self.trial_types} | SSDs: {self.ssd_numbers}")
 
-    def align_spikes_to_event(self, alignment_point='go_cue', verbose=False):
+    def align_spikes_to_event(self, alignment_point='go_cue', verbose=False, go_alignment_bias=None):
         """
         Align spike times to a specific event (go_cue, stop_cue, or saccade onset).
         
@@ -231,7 +231,7 @@ class Cell:
             return spikes - t_0
         
         if alignment_point == "stop_cue":
-            alignment_bias = self.go_trials_stop_cue_alignment_bias
+            alignment_bias = self.go_trials_stop_cue_alignment_bias if go_alignment_bias is None else go_alignment_bias
             go_trials_mask = self.data['type'] == 'GO'
             self.data.loc[go_trials_mask, 'stop_cue'] = self.data.loc[go_trials_mask, 'go_cue'] + alignment_bias
             if verbose:
