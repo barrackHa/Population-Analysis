@@ -1172,7 +1172,7 @@ def create_standard_specs(go_epok: List[int] = [-50, 300],
     """
     specs = []
 
-    directions = [0, 180] if include_both_dirs else [None]
+    directions = [0, 180] if include_both_dirs else [0]
 
     for direction in directions:
         specs.extend([

@@ -230,7 +230,8 @@ class Cell:
             spikes = np.array(row['neural_data'], dtype=float)
             return spikes - t_0
         
-        if alignment_point == "stop_cue":
+        if alignment_point == "stop_cue" and self.data['stop_cue'].isna().any():
+            # raise ValueError("Cannot align to stop_cue because some trials have NaN stop_cue values. Please populate stop_cue for GO trials first.")
             alignment_bias = self.go_trials_stop_cue_alignment_bias if go_alignment_bias is None else go_alignment_bias
             go_trials_mask = self.data['type'] == 'GO'
             self.data.loc[go_trials_mask, 'stop_cue'] = self.data.loc[go_trials_mask, 'go_cue'] + alignment_bias
