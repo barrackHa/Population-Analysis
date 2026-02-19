@@ -8,9 +8,11 @@ Author: Claude & Barak
 Date: December 2024
 """
 
+import random
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 from mpl_toolkits.mplot3d import Axes3D
 from typing import List, Dict, Optional, Tuple, Union
 from tqdm import tqdm
@@ -68,11 +70,13 @@ def _worker_extract_neuron_concat_psths(args):
                 trial_type=spec.trial_type,
                 direction=direction,
                 ssd_number=spec.ssd_number,
-                success_only=success_only,
+                success_only=spec.success_only,
+                failed_only=spec.failed_only,
                 smooth=True,
                 smooth_ker_size=smooth_ker_size,
                 delta=False,
-                normalize_bins=False
+                normalize_bins=False,
+                is_slow_go=spec.is_slow_go
             )
 
             # Check if we have data
@@ -119,11 +123,13 @@ def _worker_extract_single_condition_psth(args):
         trial_type=spec.trial_type,
         direction=direction,
         ssd_number=spec.ssd_number,
-        success_only=success_only,
+        success_only=spec.success_only,
+        failed_only=spec.failed_only,
         smooth=True,
         smooth_ker_size=smooth_ker_size,
         delta=False,
-        normalize_bins=False
+        normalize_bins=False,
+        is_slow_go=spec.is_slow_go
     )
 
     # Check if we have data
@@ -146,7 +152,10 @@ class TrialSpec:
                  epoch: List[int] = [-50, 300],
                  alignment: str = 'go_cue',
                  ssd_number: Optional[int] = None,
-                 label: Optional[str] = None):
+                 label: Optional[str] = None,
+                 success_only: bool = True,
+                 failed_only: bool = False,
+                 is_slow_go: Optional[Union[bool, None]] = None):
         """
         Define a trial condition specification.
 
@@ -165,12 +174,21 @@ class TrialSpec:
             SSD index for STOP/CONT trials (ignored for GO)
         label : str or None
             Custom label for this condition (auto-generated if None)
+        success_only : bool
+            If True, only include successful trials
+        failed_only : bool
+            If True, only include failed trials (cannot be True if success_only is also True)
+        is_slow_go : bool or None
+            If True, only include slow GO trials (ignored for non-GO trials)
         """
         self.trial_type = trial_type
         self.direction = direction
         self.epoch = epoch
         self.alignment = alignment
         self.ssd_number = ssd_number if trial_type in ['STOP', 'CONT'] else None
+        self.success_only = success_only
+        self.failed_only = failed_only
+        self.is_slow_go = is_slow_go
 
         # Generate label if not provided
         if label is None:
@@ -230,6 +248,22 @@ class FlexiblePCA:
     Allows fitting PCA on specific conditions and projecting different conditions
     onto the fitted principal components.
     """
+    PLOT_CONFIG = {
+        'GO_R': ('green', 'GO Right', '-'),
+        'GO_L': ('lime', 'GO Left', '--'),
+        'STOP_R': ('black', 'STOP Right', '-'),
+        'STOP_L': ('red', 'STOP Left', '--'),
+        'CONT_R': ('blue', 'CONT Right', '-'),
+        'CONT_L': ('cyan', 'CONT Left', '--'),
+        'SLOW_GO_R': ('darkorange', 'SLOW GO Right', '-'),
+        'SLOW_GO_L': ('pink', 'SLOW GO Left', '--'),
+        'FAST_GO_R': ('magenta', 'FAST GO Right', '-'),
+        'FAST_CONT_R': ('darkblue', 'FAST CONT Right', '-'),
+        'FAST_CONT_L': ('purple', 'FAST CONT Left', '--'),
+        'FAST_GO_L': ('darkcyan', 'FAST GO Left', '--'),
+        'ERROR_STOP_R': ('darkred', 'ERROR STOP Right', '-'),
+        'ERROR_STOP_L': ('darkmagenta', 'ERROR STOP Left', '--'),
+    }
 
     def __init__(self,
                  cell_df: pd.DataFrame,
@@ -321,7 +355,9 @@ class FlexiblePCA:
             trial_type=spec.trial_type,
             direction=direction,
             ssd_number=spec.ssd_number,
-            success_only=self.success_only,
+            success_only=spec.success_only,
+            failed_only=spec.failed_only,
+            is_slow_go=spec.is_slow_go,
             smooth=True,
             smooth_ker_size=self.smooth_ker_size,
             delta=False,
@@ -454,19 +490,23 @@ class FlexiblePCA:
 
             # Unpack results
             for cell_id, concat_psth, has_all, trial_counts in results:
+                # if has_all:
                 neurons_data.append(concat_psth)
                 neurons_ids.append(cell_id)
                 neurons_complete.append(has_all)
                 all_trial_counts.append(trial_counts)
 
         # Convert to arrays
-        X_raw_all = np.array(neurons_data)
+        X_raw_all = neurons_data #np.array(neurons_data)
         all_cell_ids = np.array(neurons_ids)
         complete_mask = np.array(neurons_complete)
 
         # Filter to only neurons with all conditions
-        self.X_fit_raw = X_raw_all[complete_mask]
-        self.cell_ids = all_cell_ids[complete_mask]
+        # self.X_fit_raw = np.array([X_raw_all[i] for i in range(len(X_raw_all)) if complete_mask[i]])
+        self.X_fit_raw = np.array(X_raw_all)
+        # self.cell_ids = all_cell_ids[complete_mask]
+        self.cell_ids = all_cell_ids
+        self.fit_mask = complete_mask
         n_cells = len(self.cell_ids)
         n_features = self.X_fit_raw.shape[1]
 
@@ -491,10 +531,10 @@ class FlexiblePCA:
         # Normalize (z-score or center per neuron)
         norm_type = "z-scoring" if self.z_score else "centering (mean subtraction)"
         self._print(f"\nNormalizing data ({norm_type} per neuron)...")
-
+        
         # Vectorized normalization - compute stats for all neurons at once
-        means = np.mean(self.X_fit_raw, axis=1, keepdims=True)  # Shape: (n_cells, 1)
-        stds = np.std(self.X_fit_raw, axis=1, keepdims=True)    # Shape: (n_cells, 1)
+        means = np.nanmean(self.X_fit_raw, axis=1, keepdims=True)  # Shape: (n_cells, 1)
+        stds = np.nanstd(self.X_fit_raw, axis=1, keepdims=True)    # Shape: (n_cells, 1)
 
         # Store stats (squeeze to 1D for compatibility)
         self.normalization_stats = {
@@ -513,7 +553,8 @@ class FlexiblePCA:
                 self.X_fit_normalized / stds,
                 0
             )
-
+        
+        # self.X_fit_normalized = self.X_fit_raw
         self._print(f"✓ Normalization complete")
         self._print(f"  Mean firing rate: {np.mean(means):.2f} ± "
                    f"{np.std(means):.2f} spikes/sec")
@@ -636,23 +677,47 @@ class FlexiblePCA:
                         ))
 
                     # Unpack results (maintain order by cell_ids)
-                    condition_psths = []
                     has_data_mask = []
+                    condition_psths = []
                     for cell_id, firing_rate, has_data in results:
-                        condition_psths.append(firing_rate)
-                        has_data_mask.append(has_data)
+                        if cell_id in self.cell_ids:
+                            condition_psths.append(firing_rate)
+                            has_data_mask.append(has_data)
 
                 # Convert to array (neurons × time_bins)
-                X_condition = np.array(condition_psths)
+                spec_bins = (spec.epoch[1] - spec.epoch[0]) // self.bin_size
+                X_condition = np.empty((len(self.cell_ids), spec_bins), dtype=np.float64)
+                # print(f"{[condition_psths[i].shape for i in range(5)]}")
+                # X_condition = []
+                # X_condition = np.array([
+                #     condition_psths[i] if has_data_mask[i] else np.full(spec_bins, np.nan) 
+                #     for i in range(len(condition_psths))
+                # ])
+                for i in range(len(condition_psths)):
+                    # if has_data_mask[i]:
+                    X_condition[i,:] = condition_psths[i]
+                        # print(f"Neuron {self.cell_ids[i]} has data. condition_psths[{i}] mean: {condition_psths[i].mean()}.")
+                    # else:
+                        # X_condition[i,:] = np.full(spec_bins, np.nan)
+                        # print(f"Neuron {self.cell_ids[i]} has no data. condition_psths[{i}] shape: {condition_psths[i].shape}.")
+                        # print(f"Has data mask: {has_data_mask[i]}")
+                        # print(f"Is all nan? {np.isnan(condition_psths[i]).all()}\n{condition_psths[i]}")
+                # X_condition = np.array(X_condition)  # Shape: (n_neurons, n_time_bins)
                 has_data_mask = np.array(has_data_mask)
+
+                print(f"{self.cell_ids.shape}, {X_condition.shape}")
 
                 self._print(f"  {cond_label}: {has_data_mask.sum()}/{len(has_data_mask)} "
                           f"neurons have data")
-
+                
                 # Normalize using same stats as fit data (vectorized)
                 means = self.normalization_stats['mean'][:, np.newaxis]  # Shape: (n_cells, 1)
                 stds = self.normalization_stats['std'][:, np.newaxis]    # Shape: (n_cells, 1)
+                # means = np.nanmean(X_condition, axis=1, keepdims=True)  # Shape: (n_cells, 1)
+                # stds = np.nanstd(X_condition, axis=1, keepdims=True)    # Shape: (n_cells, 1)
 
+                print(f" :X_condition mean {np.nanmean(X_condition)}, std {np.nanstd(X_condition)}")
+                print(f" :X_condition shape {X_condition.shape}, means shape {means.shape}")
                 # Subtract mean
                 X_condition_normalized = X_condition - means
 
@@ -664,11 +729,13 @@ class FlexiblePCA:
                         X_condition_normalized / stds,
                         0
                     )
-
+                ""
                 # Project onto PCs
                 # PCA components: (n_components, n_features_fit)
                 # We want to project (n_neurons, n_time_bins) onto the PC space
                 # Projection: PC_components @ neurons
+                # X_condition_normalized = X_condition
+                print(f"X_condition_normalized.shape: {X_condition_normalized.shape}, PCA components shape: {self.pca_model.components_.shape}")
                 projection = self.pca_model.components_ @ X_condition_normalized
                 # Shape: (n_components, n_time_bins)
 
@@ -794,14 +861,7 @@ class FlexiblePCA:
         ax = fig.add_subplot(111, projection='3d')
 
         # Standard color/linestyle configuration
-        plot_config = {
-            'GO_R': ('cyan', 'GO Right', '-'),
-            'GO_L': ('blue', 'GO Left', '--'),
-            'STOP_R': ('orange', 'STOP Right', '-'),
-            'STOP_L': ('red', 'STOP Left', '--'),
-            'CONT_R': ('lime', 'CONT Right', '-'),
-            'CONT_L': ('green', 'CONT Left', '--'),
-        }
+        plot_config = self.PLOT_CONFIG
 
         # Plot trajectories
         for label, traj in trajectories_dict.items():
@@ -809,7 +869,10 @@ class FlexiblePCA:
             if label in plot_config:
                 color, display_label, linestyle = plot_config[label]
             else:
-                color, display_label, linestyle = 'gray', label, '-'
+                color = random.choice(list(mcolors.CSS4_COLORS.keys()))
+                display_label = label
+                linestyle = '-'
+                # color, display_label, linestyle = 'gray', label, '-'
 
             ax.plot(traj[0, :], traj[1, :], traj[2, :],
                    label=display_label, color=color, linewidth=2,
@@ -901,14 +964,7 @@ class FlexiblePCA:
         fig, axes = plt.subplots(n_pcs, n_pcs, figsize=figsize)
 
         # Standard color/linestyle configuration
-        plot_config = {
-            'GO_R': ('cyan', 'GO Right', '-'),
-            'GO_L': ('blue', 'GO Left', '--'),
-            'STOP_R': ('orange', 'STOP Right', '-'),
-            'STOP_L': ('red', 'STOP Left', '--'),
-            'CONT_R': ('lime', 'CONT Right', '-'),
-            'CONT_L': ('green', 'CONT Left', '--'),
-        }
+        plot_config = self.PLOT_CONFIG
 
         var_ratios = self.pca_model.explained_variance_ratio_
 
@@ -930,7 +986,9 @@ class FlexiblePCA:
                         if label in plot_config:
                             color, display_label, linestyle = plot_config[label]
                         else:
-                            color, display_label, linestyle = 'gray', label, '-'
+                            color = random.choice(list(mcolors.CSS4_COLORS.keys()))
+                            display_label = label
+                            linestyle = '-'
 
                         ax.plot(traj[j, :], traj[i, :],
                                label=display_label, color=color, linewidth=1.2,
@@ -1017,8 +1075,8 @@ class FlexiblePCA:
             raise ValueError("Must call fit() before plotting")
 
         # Auto-compute mean SSD if requested and marker_time_ms not provided
-        if marker_time_ms is None and show_ssd_marker:
-            marker_time_ms = self.compute_mean_ssd(ssd_number)
+        # if marker_time_ms is None and show_ssd_marker:
+        #     marker_time_ms = self.compute_mean_ssd(ssd_number)
 
         fig, axes = plt.subplots(n_pcs, 1, figsize=figsize)
 
@@ -1027,14 +1085,7 @@ class FlexiblePCA:
             axes = [axes]
 
         # Standard color/linestyle configuration
-        plot_config = {
-            'GO_R': ('cyan', 'GO Right', '-'),
-            'GO_L': ('blue', 'GO Left', '--'),
-            'STOP_R': ('orange', 'STOP Right', '-'),
-            'STOP_L': ('red', 'STOP Left', '--'),
-            'CONT_R': ('lime', 'CONT Right', '-'),
-            'CONT_L': ('green', 'CONT Left', '--'),
-        }
+        plot_config = self.PLOT_CONFIG
 
         var_ratios = self.pca_model.explained_variance_ratio_
 
@@ -1044,12 +1095,16 @@ class FlexiblePCA:
             # Plot trajectories
             for label, traj in trajectories_dict.items():
                 time_axis = time_axes_dict[label]
+                # print(f"{label}: trajectory shape={traj.shape}, time_axis shape={time_axis.shape}")
 
                 # Get plot config
                 if label in plot_config:
                     color, display_label, linestyle = plot_config[label]
                 else:
-                    color, display_label, linestyle = 'gray', label, '-'
+                    # color, display_label, linestyle = 'gray', label, '-'
+                    color = random.choice(list(mcolors.CSS4_COLORS.keys()))
+                    display_label = label
+                    linestyle = '-'
 
                 ax.plot(time_axis, traj[i, :], label=display_label,
                        color=color, linewidth=2, alpha=0.7, linestyle=linestyle)

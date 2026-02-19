@@ -243,7 +243,7 @@ class Cell:
         return aligned
     
     def filter_trials(self, trial_type=None, direction=None, ssd_number=None, 
-                     success_only=False, failed_only=False):
+                     success_only=False, failed_only=False, is_slow_go=None):
         """
         Filter trials based on various criteria.
         
@@ -259,7 +259,9 @@ class Cell:
             Include only successful trials
         failed_only : bool
             Include only failed trials
-        
+        is_slow_go : bool or None
+            If True, only include slow GO trials (ignored for non-GO trials).
+            Else if False, only include fast GO trials. If None, include all GO trials. 
         Returns:
         --------
         pd.DataFrame : Filtered DataFrame
@@ -280,6 +282,15 @@ class Cell:
         
         if failed_only:
             filtered = filtered[filtered['trial_failed'] == True]
+        
+        if is_slow_go is not None:
+            try:
+                filtered = filtered[filtered['is_slow_go'] == is_slow_go]
+            except KeyError:
+                if is_slow_go:
+                    filtered = filtered[filtered['reaction_time'] >= 200]
+                else:
+                    filtered = filtered[filtered['reaction_time'] < 200]
         
         return filtered
     
@@ -443,7 +454,8 @@ class Cell:
     def aggregate_spikes_by_bins(self, epok=[-200, 500], bin_size=11,
                                  alignment_point='go_cue', trial_type=None, 
                                  direction=None, ssd_number=None, 
-                                 success_only=True, failed_only=False, normalize=False):
+                                 success_only=True, failed_only=False, normalize=False, 
+                                 is_slow_go=None):
         """
         Aggregate spikes into bins for a specific set of trials.
         
@@ -486,7 +498,8 @@ class Cell:
             direction=direction,
             ssd_number=ssd_number,
             success_only=success_only,
-            failed_only=failed_only
+            failed_only=failed_only,
+            is_slow_go=is_slow_go
         )
         
         if len(filtered_data) == 0:
@@ -519,7 +532,8 @@ class Cell:
                       alignment_point='go_cue', trial_type=None, direction=None,
                       ssd_number=None, success_only=True, failed_only=False, 
                       smooth=True, delta=False,
-                      smooth_ker_size=25, normalize_bins=False):
+                      smooth_ker_size=25, normalize_bins=False,
+                      is_slow_go=None):
         """
         Calculate PSTH (peri-stimulus time histogram) with firing rate and Gaussian smoothing.
         
@@ -565,7 +579,8 @@ class Cell:
             ssd_number=ssd_number,
             success_only=success_only,
             failed_only=failed_only,
-            normalize=normalize_bins
+            normalize=normalize_bins,
+            is_slow_go=is_slow_go
         )
         
         if bin_centers is None:
@@ -579,63 +594,63 @@ class Cell:
         
         # Apply Gaussian smoothing if requested
         if smooth:
-            # firing_rate = gaussian_filter1d(firing_rate, sigma=smooth_ker_size)
-            def pani_sdf_kernel(tau_g=1.0, tau_d=20.0, duration=20.0, dt=1.0):
-                """
-                Create the Pani et al. 2022 spike density function kernel.
+            firing_rate = gaussian_filter1d(firing_rate, sigma=smooth_ker_size)
+            # def pani_sdf_kernel(tau_g=1.0, tau_d=20.0, duration=20.0, dt=1.0):
+            #     """
+            #     Create the Pani et al. 2022 spike density function kernel.
                 
-                K(t) = [1 - exp(-t/τg)] × exp(-t/τd)
+            #     K(t) = [1 - exp(-t/τg)] × exp(-t/τd)
                 
-                Parameters:
-                -----------
-                tau_g : float
-                    Growth time constant (ms), default 1.0 ms
-                tau_d : float
-                    Decay time constant (ms), default 20.0 ms
-                duration : float
-                    Duration of kernel (ms), default 20 ms
-                dt : float
-                    Time step (ms), default 1.0 ms
+            #     Parameters:
+            #     -----------
+            #     tau_g : float
+            #         Growth time constant (ms), default 1.0 ms
+            #     tau_d : float
+            #         Decay time constant (ms), default 20.0 ms
+            #     duration : float
+            #         Duration of kernel (ms), default 20 ms
+            #     dt : float
+            #         Time step (ms), default 1.0 ms
                 
-                Returns:
-                --------
-                t : ndarray
-                    Time array
-                kernel : ndarray
-                    Kernel values (normalized to sum to 1)
-                """
-                t = np.arange(0, duration, dt)
+            #     Returns:
+            #     --------
+            #     t : ndarray
+            #         Time array
+            #     kernel : ndarray
+            #         Kernel values (normalized to sum to 1)
+            #     """
+            #     t = np.arange(0, duration, dt)
                 
-                # Compute kernel: K(t) = [1 - exp(-t/τg)] × exp(-t/τd)
-                kernel = (1 - np.exp(-t / tau_g)) * np.exp(-t / tau_d)
+            #     # Compute kernel: K(t) = [1 - exp(-t/τg)] × exp(-t/τd)
+            #     kernel = (1 - np.exp(-t / tau_g)) * np.exp(-t / tau_d)
                 
-                # Normalize so kernel sums to 1 (preserves spike count)
-                kernel = kernel / np.sum(kernel)
+            #     # Normalize so kernel sums to 1 (preserves spike count)
+            #     kernel = kernel / np.sum(kernel)
                 
-                return t, kernel
+            #     return t, kernel
 
 
-            # Create and visualize the kernel
-            tau_g = 1.0  # ms
-            tau_d = 20.0  # ms
-            kernel_duration = 20.0  # ms (compact kernel for sharper temporal resolution)
-            dt = 1.0  # ms
+            # # Create and visualize the kernel
+            # tau_g = 1.0  # ms
+            # tau_d = 20.0  # ms
+            # kernel_duration = 20.0  # ms (compact kernel for sharper temporal resolution)
+            # dt = 1.0  # ms
 
-            _, kernel = pani_sdf_kernel(tau_g=tau_g, tau_d=tau_d, duration=kernel_duration, dt=dt)
+            # _, kernel = pani_sdf_kernel(tau_g=tau_g, tau_d=tau_d, duration=kernel_duration, dt=dt)
     
-            # Convolve spike train with kernel (CAUSAL)
-            # mode='full' gives output of length N+M-1
-            # Taking [:len(spike_train)] makes it causal: spike affects its own time and future
-            sdf_full = np.convolve(firing_rate, kernel, mode='full')
-            firing_rate = sdf_full[:len(firing_rate)]  # Causal: only take first N elements
+            # # Convolve spike train with kernel (CAUSAL)
+            # # mode='full' gives output of length N+M-1
+            # # Taking [:len(spike_train)] makes it causal: spike affects its own time and future
+            # sdf_full = np.convolve(firing_rate, kernel, mode='full')
+            # firing_rate = sdf_full[:len(firing_rate)]  # Causal: only take first N elements
             
 
         
         # remove edges affected by smoothing
-        bin_centers = bin_centers[smooth_ker_size :]
-        # bin_centers = bin_centers[smooth_ker_size : -smooth_ker_size]
-        # firing_rate = firing_rate[smooth_ker_size : -smooth_ker_size]
-        firing_rate = firing_rate[smooth_ker_size :]
+        # bin_centers = bin_centers[smooth_ker_size :]
+        bin_centers = bin_centers[smooth_ker_size : -smooth_ker_size]
+        firing_rate = firing_rate[smooth_ker_size : -smooth_ker_size]
+        # firing_rate = firing_rate[smooth_ker_size :]
         
         return bin_centers, firing_rate, n_trials
     
