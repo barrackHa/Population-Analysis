@@ -16,3 +16,4 @@ tqdm
 openpyxl>=3.1
 jupyter_bokeh
 pytest
+seaborn

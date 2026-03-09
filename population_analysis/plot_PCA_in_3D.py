@@ -5,10 +5,12 @@ from pathlib import Path
 
 print(Path.cwd())
 
-left_PCs = np.load('data/PCA_data/left_PCs.npy')
-stop_left_PCs = np.load('data/PCA_data/stop_left_PCs.npy')
-right_PCs = np.load('data/PCA_data/right_PCs.npy')
-stop_right_PCs = np.load('data/PCA_data/stop_right_PCs.npy')
+# left_PCs = np.load('data/PCA_data/left_PCs.npy')
+left_PCs = np.load('data/PCA_data/pani_go_left_PCs.npy')
+# stop_left_PCs = np.load('data/PCA_data/stop_left_PCs.npy')
+stop_left_PCs = np.load('data/PCA_data/pani_stop_left_PCs.npy')
+# right_PCs = np.load('data/PCA_data/right_PCs.npy')
+# stop_right_PCs = np.load('data/PCA_data/stop_right_PCs.npy')
 
 print(stop_left_PCs.shape, left_PCs.shape)
 
@@ -28,16 +30,16 @@ ax.scatter(
 )
 
 # Plot right trajectory (0°)
-ax.plot(
-    right_PCs[0, :], right_PCs[1, :], right_PCs[2, :], 
-    color='green', linewidth=2, label='Right (0°)'
-)
+# ax.plot(
+#     right_PCs[0, :], right_PCs[1, :], right_PCs[2, :], 
+#     color='green', linewidth=2, label='Right (0°)'
+# )
 
-ax.scatter(
-    right_PCs[0, 0], right_PCs[1, 0], right_PCs[2, 0], 
-    marker='^', s=200, color='green', edgecolors='black', linewidths=2, 
-    label='Right Start', zorder=5
-)
+# ax.scatter(
+#     right_PCs[0, 0], right_PCs[1, 0], right_PCs[2, 0], 
+#     marker='^', s=200, color='green', edgecolors='black', linewidths=2, 
+#     label='Right Start', zorder=5
+# )
 
 # Plot left STOP trajectory (180°)
 ax.plot(

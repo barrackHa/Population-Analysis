@@ -16,6 +16,7 @@ Date: October 2025
 import pandas as pd
 import numpy as np
 import holoviews as hv
+import hvplot.pandas  # noqa: F401
 from holoviews import opts
 from scipy.ndimage import gaussian_filter1d
 from scipy.stats import zscore
@@ -33,12 +34,14 @@ class Cell:
     TYPE_COLORS = {'GO': '#2ca02c', 'STOP': '#d62728', 'CONT': '#9467bd'}  # Green, Red, Purple
     SSD_COLORS = {
         1: '#000000', 2: '#0072B2', 3: '#D55E00', 4: '#009E73',
-        'GO': '#2ca02c',  # Green for GO trials
-        'combined': '#1f77b4' 
+        'GO': "#ff2ef8",  # Green for GO trials
+        'GO_0': "#ff2ef8",
+        'GO_180': "#82ff2e",
+        'combined': "#c0faff" 
     }  # Different colors for each SSD
     
     
-    def __init__(self, cell_df, verbose=False):
+    def __init__(self, cell_df: pd.DataFrame, verbose=False, go_trials_stop_cue_alignment_bias=150):
         """
         Initialize MSN cell with its trial data.
         
@@ -46,11 +49,23 @@ class Cell:
         -----------
         cell_df : pd.DataFrame
             DataFrame containing all trials for a single cell
+        verbose: bool
+            If true - print cell properties
+        go_trials_stop_cue_alignment_bias: int
+            When aligning GO trials to stop_cue - stop_cue is NaN, instead use  
+            stop_cue = go_trials_stop_cue_alignment_bias
         """
         self.data = cell_df.copy().reset_index(drop=True)
         self.cell_id = cell_df.iloc[0]['cell_ID'].astype(int)
         self.cell_type = cell_df.iloc[0]['cell_type']
         self.sessions = cell_df['trial_session'].unique()
+        
+        assr_err = "Alignment bias represents time in MS after go cue and thus needs to be a positive int" 
+        assert (
+                isinstance(go_trials_stop_cue_alignment_bias, int) and \
+                (0 < go_trials_stop_cue_alignment_bias)
+            ), assr_err
+        self.go_trials_stop_cue_alignment_bias = go_trials_stop_cue_alignment_bias
 
         assert len(self.sessions) == 1, "Cell data should belong to a single session"
         
@@ -72,6 +87,7 @@ class Cell:
             print(f"  - Trial types: {self.trial_types}")
             print(f"  - Directions: {self.directions}")
             print(f"  - SSD numbers: {self.ssd_numbers}")
+            print(f"  - Alignment bias for GO trials to STOP cue: {self.ssd_numbers}")
     
     @property
     def baseline_FR(self):
@@ -89,12 +105,97 @@ class Cell:
         self._baseline_FR = base_FR
         return self._baseline_FR
     
+    @property
+    def go_left_FR(self):
+        # Calculate go left trial firing rate from 0 to 500 ms after go_cue       
+        _, spike_counts, n_trials = self.aggregate_spikes_by_bins(  
+            epok=[0, 500], bin_size=1,
+            alignment_point='go_cue', trial_type='GO', 
+            direction=180, ssd_number=None, 
+            success_only=True, normalize=False
+        )
+        go_left_FR = (spike_counts / n_trials).mean() * 1000  # spikes/sec
+        return go_left_FR
+    
+    @property
+    def go_right_FR(self):
+        # Calculate go right trial firing rate from 0 to 500 ms after go_cue       
+        _, spike_counts, n_trials = self.aggregate_spikes_by_bins(  
+            epok=[0, 500], bin_size=1,
+            alignment_point='go_cue', trial_type='GO', 
+            direction=0, ssd_number=None, 
+            success_only=True, normalize=False
+        )
+        go_right_FR = (spike_counts / n_trials).mean() * 1000  # spikes/sec
+        return go_right_FR
+    
+    @property
+    def left_stop_FR(self):
+        # Calculate stop left trial firing rate from 0 to 200 ms after stop_cue       
+        _, spike_counts, n_trials = self.aggregate_spikes_by_bins(  
+            epok=[0, 200], bin_size=1,
+            alignment_point='stop_cue', trial_type='STOP', 
+            direction=180, ssd_number=None, 
+            success_only=True, normalize=False
+        )
+        left_stop_FR = (spike_counts / n_trials).mean() * 1000  # spikes/sec
+        return left_stop_FR
+    
+    @property
+    def right_stop_FR(self):
+        # Calculate stop right trial firing rate from 0 to 200 ms after stop_cue       
+        _, spike_counts, n_trials = self.aggregate_spikes_by_bins(  
+            epok=[0, 200], bin_size=1,
+            alignment_point='stop_cue', trial_type='STOP', 
+            direction=0, ssd_number=None, 
+            success_only=True, normalize=False
+        )
+        right_stop_FR = (spike_counts / n_trials).mean() * 1000  # spikes/sec
+        return right_stop_FR
+    
+    @property   
+    def left_cont_FR(self):
+        # Calculate control left trial firing rate from 0 to 200 ms after go_cue       
+        _, spike_counts, n_trials = self.aggregate_spikes_by_bins(  
+            epok=[0, 200], bin_size=1,
+            alignment_point='go_cue', trial_type='CONT', 
+            direction=180, ssd_number=None, 
+            success_only=True, normalize=False
+        )
+        left_cont_FR = (spike_counts / n_trials).mean() * 1000  # spikes/sec
+        return left_cont_FR
+    
+    @property   
+    def right_cont_FR(self):
+        # Calculate control right trial firing rate from 0 to 200 ms after go_cue       
+        _, spike_counts, n_trials = self.aggregate_spikes_by_bins(  
+            epok=[0, 200], bin_size=1,
+            alignment_point='go_cue', trial_type='CONT', 
+            direction=0, ssd_number=None, 
+            success_only=True, normalize=False
+        )
+        right_cont_FR = (spike_counts / n_trials).mean() * 1000  # spikes/sec
+        return right_cont_FR
+    
+    @property   
+    def FR_summary(self):
+        return {
+            'baseline_FR': self.baseline_FR,
+            'go_left_FR': self.go_left_FR,
+            'go_right_FR': self.go_right_FR,
+            'left_stop_FR': self.left_stop_FR,
+            'right_stop_FR': self.right_stop_FR,
+            'left_cont_FR': self.left_cont_FR,
+            'right_cont_FR': self.right_cont_FR
+        }
+
+    
     def __repr__(self):
         return (f"Cell {self.cell_id} | Type: {self.cell_type} | "
                 f"Trials: {len(self.data)} | Directions: {self.directions} | "
                 f"Trial Types: {self.trial_types} | SSDs: {self.ssd_numbers}")
 
-    def align_spikes_to_event(self, alignment_point='go_cue'):
+    def align_spikes_to_event(self, alignment_point='go_cue', verbose=False, go_alignment_bias=None):
         """
         Align spike times to a specific event (go_cue, stop_cue, or saccade onset).
         
@@ -111,7 +212,9 @@ class Cell:
             if alignment_point == 'go_cue':
                 return row['go_cue']
             elif alignment_point == 'stop_cue':
-                return row['stop_cue'] if not pd.isna(row['stop_cue']) else row['go_cue']
+                if pd.isna(row['stop_cue']):
+                    raise ValueError("stop_cue is NaN for this trial")
+                return row['stop_cue']
             elif alignment_point == 'first_relevant_saccade':
                 saccade = row['first_relevant_saccade']
                 if isinstance(saccade, (list, np.ndarray)) and len(saccade) > 0:
@@ -127,12 +230,20 @@ class Cell:
             spikes = np.array(row['neural_data'], dtype=float)
             return spikes - t_0
         
+        if alignment_point == "stop_cue" and self.data['stop_cue'].isna().any():
+            # raise ValueError("Cannot align to stop_cue because some trials have NaN stop_cue values. Please populate stop_cue for GO trials first.")
+            alignment_bias = self.go_trials_stop_cue_alignment_bias if go_alignment_bias is None else go_alignment_bias
+            go_trials_mask = self.data['type'] == 'GO'
+            self.data.loc[go_trials_mask, 'stop_cue'] = self.data.loc[go_trials_mask, 'go_cue'] + alignment_bias
+            if verbose:
+                print(f"✓ Populated stop_cue for {go_trials_mask.sum()} GO trials")
+
         aligned = self.data.apply(align_spikes, axis=1)
-        self.data[f'spikes_aligned_to_{alignment_point}'] = aligned
+        self.data[f'spikes_aligned_to_{alignment_point}'] = aligned        
         return aligned
     
     def filter_trials(self, trial_type=None, direction=None, ssd_number=None, 
-                     success_only=False, failed_only=False):
+                     success_only=False, failed_only=False, is_slow_go=None):
         """
         Filter trials based on various criteria.
         
@@ -148,7 +259,9 @@ class Cell:
             Include only successful trials
         failed_only : bool
             Include only failed trials
-        
+        is_slow_go : bool or None
+            If True, only include slow GO trials (ignored for non-GO trials).
+            Else if False, only include fast GO trials. If None, include all GO trials. 
         Returns:
         --------
         pd.DataFrame : Filtered DataFrame
@@ -169,6 +282,15 @@ class Cell:
         
         if failed_only:
             filtered = filtered[filtered['trial_failed'] == True]
+        
+        if is_slow_go is not None:
+            try:
+                filtered = filtered[filtered['is_slow_go'] == is_slow_go]
+            except KeyError:
+                if is_slow_go:
+                    filtered = filtered[filtered['reaction_time'] >= 200]
+                else:
+                    filtered = filtered[filtered['reaction_time'] < 200]
         
         return filtered
     
@@ -232,7 +354,11 @@ class Cell:
             self.SSD_COLORS[key] for key in range(1,5)
         ]
         
-        overlay *= spikes_arr.hvplot.heatmap(x='columns', y='index').opts(
+        # Melt DataFrame and ensure x-axis values are numeric (fixes HoloViews string diff error)
+        spikes_melted = spikes_arr.reset_index().melt(id_vars='index', var_name='time', value_name='value')
+        spikes_melted['time'] = spikes_melted['time'].astype(float)
+        
+        overlay *= spikes_melted.hvplot.heatmap(x='time', y='index', C='value').opts(
             cmap=colors, colorbar=False, width=800, height=600
         )
 
@@ -251,7 +377,6 @@ class Cell:
                 xlim=(epok[0], epok[1])
             )
         )
-        
         return plot
     
     def plot_raster_by_type_direction(self, epok=[-200, 500], 
@@ -329,7 +454,8 @@ class Cell:
     def aggregate_spikes_by_bins(self, epok=[-200, 500], bin_size=11,
                                  alignment_point='go_cue', trial_type=None, 
                                  direction=None, ssd_number=None, 
-                                 success_only=True, normalize=False):
+                                 success_only=True, failed_only=False, normalize=False, 
+                                 is_slow_go=None):
         """
         Aggregate spikes into bins for a specific set of trials.
         
@@ -349,6 +475,8 @@ class Cell:
             SSD number (1-4)
         success_only : bool
             Include only successful trials (default: True)
+        failed_only : bool
+            Include only failed trials (default: False)
         normalize : bool
             If True, normalize spike counts to [0, 1] (default: False)
         
@@ -369,7 +497,9 @@ class Cell:
             trial_type=trial_type,
             direction=direction,
             ssd_number=ssd_number,
-            success_only=success_only
+            success_only=success_only,
+            failed_only=failed_only,
+            is_slow_go=is_slow_go
         )
         
         if len(filtered_data) == 0:
@@ -377,7 +507,7 @@ class Cell:
         
         # Create bins
         bins = np.arange(epok[0], epok[1] + bin_size, bin_size)
-        bin_centers = bins[:-1] + bin_size // 2
+        bin_centers = bins[:-1] #+ bin_size // 2
         
         # Count spikes in each bin across all trials
         spike_counts = np.zeros(len(bins) - 1)
@@ -400,8 +530,10 @@ class Cell:
     
     def calculate_psth(self, epok=[-200, 500], bin_size=10,
                       alignment_point='go_cue', trial_type=None, direction=None,
-                      ssd_number=None, success_only=True, smooth=True, delta=False,
-                      smooth_ker_size=25, normalize_bins=False):
+                      ssd_number=None, success_only=True, failed_only=False, 
+                      smooth=True, delta=False,
+                      smooth_ker_size=25, normalize_bins=False,
+                      is_slow_go=None):
         """
         Calculate PSTH (peri-stimulus time histogram) with firing rate and Gaussian smoothing.
         
@@ -446,7 +578,9 @@ class Cell:
             direction=direction,
             ssd_number=ssd_number,
             success_only=success_only,
-            normalize=normalize_bins
+            failed_only=failed_only,
+            normalize=normalize_bins,
+            is_slow_go=is_slow_go
         )
         
         if bin_centers is None:
@@ -461,8 +595,64 @@ class Cell:
         # Apply Gaussian smoothing if requested
         if smooth:
             firing_rate = gaussian_filter1d(firing_rate, sigma=smooth_ker_size)
+            # def pani_sdf_kernel(tau_g=1.0, tau_d=20.0, duration=20.0, dt=1.0):
+            #     """
+            #     Create the Pani et al. 2022 spike density function kernel.
+                
+            #     K(t) = [1 - exp(-t/τg)] × exp(-t/τd)
+                
+            #     Parameters:
+            #     -----------
+            #     tau_g : float
+            #         Growth time constant (ms), default 1.0 ms
+            #     tau_d : float
+            #         Decay time constant (ms), default 20.0 ms
+            #     duration : float
+            #         Duration of kernel (ms), default 20 ms
+            #     dt : float
+            #         Time step (ms), default 1.0 ms
+                
+            #     Returns:
+            #     --------
+            #     t : ndarray
+            #         Time array
+            #     kernel : ndarray
+            #         Kernel values (normalized to sum to 1)
+            #     """
+            #     t = np.arange(0, duration, dt)
+                
+            #     # Compute kernel: K(t) = [1 - exp(-t/τg)] × exp(-t/τd)
+            #     kernel = (1 - np.exp(-t / tau_g)) * np.exp(-t / tau_d)
+                
+            #     # Normalize so kernel sums to 1 (preserves spike count)
+            #     kernel = kernel / np.sum(kernel)
+                
+            #     return t, kernel
+
+
+            # # Create and visualize the kernel
+            # tau_g = 1.0  # ms
+            # tau_d = 20.0  # ms
+            # kernel_duration = 20.0  # ms (compact kernel for sharper temporal resolution)
+            # dt = 1.0  # ms
+
+            # _, kernel = pani_sdf_kernel(tau_g=tau_g, tau_d=tau_d, duration=kernel_duration, dt=dt)
+    
+            # # Convolve spike train with kernel (CAUSAL)
+            # # mode='full' gives output of length N+M-1
+            # # Taking [:len(spike_train)] makes it causal: spike affects its own time and future
+            # sdf_full = np.convolve(firing_rate, kernel, mode='full')
+            # firing_rate = sdf_full[:len(firing_rate)]  # Causal: only take first N elements
+            
+
         
-        return bin_centers, firing_rate[smooth_ker_size : -smooth_ker_size], n_trials
+        # remove edges affected by smoothing
+        # bin_centers = bin_centers[smooth_ker_size :]
+        bin_centers = bin_centers[smooth_ker_size : -smooth_ker_size]
+        firing_rate = firing_rate[smooth_ker_size : -smooth_ker_size]
+        # firing_rate = firing_rate[smooth_ker_size :]
+        
+        return bin_centers, firing_rate, n_trials
     
     def plot_histogram_by_type_direction(self, epok=[-200, 500], bin_size=1,
                                         alignment_point='go_cue', separate_ssd=False,
@@ -624,6 +814,7 @@ class Cell:
                                     alignment_point='go_cue', 
                                     separate_ssd=False, smooth=True, 
                                     smooth_ker_size=25, delta=False, 
+                                    success_only=True, failed_only=False,
                                     normalize_bins=False):
         """
         Create PSTH (peri-stimulus time histogram) plots for each trial type and direction.
@@ -666,7 +857,8 @@ class Cell:
                 test_data = self.filter_trials(
                     direction=direction,
                     trial_type=trial_type,
-                    success_only=True
+                    success_only=success_only,
+                    failed_only=failed_only
                 )
                 
                 if len(test_data) == 0:
@@ -685,7 +877,8 @@ class Cell:
                             trial_type=trial_type,
                             direction=direction,
                             ssd_number=ssd_num,
-                            success_only=True,
+                            success_only=success_only,
+                            failed_only=failed_only,
                             smooth=smooth,
                             smooth_ker_size=smooth_ker_size,
                             delta=delta,
@@ -696,6 +889,7 @@ class Cell:
                             continue
                         
                         # Create curve for this SSD
+                        dashed = "dotted" if (direction == 0) else "dashed" 
                         curve = hv.Curve(
                             (bin_centers, firing_rate),
                             kdims='Time', 
@@ -703,6 +897,7 @@ class Cell:
                             label=f'SSD{int(ssd_num)} (n={n_trials})'
                         ).opts(
                             color=ssd_colors.get(ssd_num, '#7f7f7f'),
+                            line_dash=dashed,
                             line_width=2, tools=['hover'], muted_alpha=0
                         )
                         plot_elements[f'SSD{int(ssd_num)}'] = curve
@@ -714,11 +909,14 @@ class Cell:
                     
                     # Combine and configure
                     smoothed_label = " (smoothed)" if smooth else ""
+                    ttl = f"Cell {self.cell_id} - {trial_type} trials - {dir_label} (Success Only)\n" + \
+                            f"PSTH by SSD (bin={bin_size}ms{smoothed_label}); " +\
+                            f"Dotted - right, Dashed - left. Aligned to {alignment_point}"
                     plot = (hv.NdOverlay(plot_elements) * zero_line).opts(
                         opts.NdOverlay(
                             xlabel=f'Time from {alignment_point} (ms)',
                             ylabel='Firing Rate (spikes/s)',
-                            title=f"Cell {self.cell_id} - {trial_type} trials - {dir_label} (Success Only)\nPSTH by SSD (bin={bin_size}ms{smoothed_label})",
+                            title=ttl,
                             width=800, height=300,
                             legend_position='top',
                             show_grid=True,
@@ -734,7 +932,8 @@ class Cell:
                         alignment_point=alignment_point,
                         trial_type=trial_type,
                         direction=direction,
-                        success_only=True,
+                        success_only=success_only,
+                        failed_only=failed_only,
                         smooth=smooth, 
                         smooth_ker_size=smooth_ker_size,
                         delta=delta,
@@ -744,8 +943,12 @@ class Cell:
                     if bin_centers is None:
                         continue
                     
+                    # set colors
+                    # color = ssd_colors[f'GO_{direction}'] 
+                    # if trial_type != 'GO':
+                    color = self.DIRECTION_COLORS[direction]
+
                     # Create curve
-                    color = ssd_colors['GO'] if trial_type == 'GO' else ssd_colors['combined']
                     psth_curve = hv.Curve(
                         (bin_centers, firing_rate),
                         kdims='Time', 
@@ -762,16 +965,19 @@ class Cell:
                     )
                     
                     # Combine and configure
-                    ssd_label = f" (all SSDs, n={n_trials})" if trial_type != 'GO' else f" (n={n_trials})"
                     smoothed_label = " (smoothed)" if smooth else ""
+                    aligned_to = f'GO + {self.go_trials_stop_cue_alignment_bias} MS' if trial_type == 'GO' else alignment_point
+                    ttl = f"Cell {self.cell_id} - {n_trials} {trial_type} trials - {dir_label} (Success Only)\n" + \
+                            f"PSTH (bin={bin_size}ms{smoothed_label}). Aligned to {aligned_to}" 
                     plot = (psth_curve * zero_line).opts(
                         opts.Curve(
                             xlabel=f'Time from {alignment_point} (ms)',
                             ylabel='Firing Rate (spikes/s)',
-                            title=f"Cell {self.cell_id} - {trial_type} trials - {dir_label} (Success Only){ssd_label}\nPSTH (bin={bin_size}ms{smoothed_label})",
+                            title=ttl,
                             width=800, height=300,
                             show_grid=True,
-                            xlim=(epok[0], epok[1])
+                            xlim=(epok[0], epok[1]),
+                            show_legend=True
                         ),
                         opts.VLine(color='red', line_width=2, line_dash='dashed')
                     )
